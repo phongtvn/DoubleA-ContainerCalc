@@ -49,16 +49,16 @@ define(['N/file'], function (file) {
         
         
         // container
-        var binCutsize = {length: 232.13, width: 92.52, height: 93.90};
+        var containerData = {length: 232.13, width: 92.52, height: 93.90};
         if (boxesCutsize && typeof boxesCutsize === 'object') {
             var firstKey = Object.keys(boxesCutsize)[0]; // Get the first product name key
             if (firstKey && boxesCutsize[firstKey].length > 0) {
-                binCutsize = boxesCutsize[firstKey][0].binCutsize || null;
+                containerData = boxesCutsize[firstKey][0].containerData || null;
             }
         }
         
         
-        function greedyBinPacking(boxesCutsize, binCutsize) {
+        function greedyBinPacking(boxesCutsize, containerData) {
             
             var hasCutsize = Object.keys(boxesCutsize).some(function (group) {
                 return boxesCutsize[group].some(function (item) {
@@ -93,10 +93,10 @@ define(['N/file'], function (file) {
                 
                 if (Object.keys(boxesCutsize).length > 1) {
                     
-                    var balanceWidth = binCutsize.width;
-                    var balanceLength = binCutsize.length;
-                    var balanceHeight = binCutsize.height;
-                    var balanceWeight = binCutsize.maxWeight * 1000;
+                    var balanceWidth = containerData.width;
+                    var balanceLength = containerData.length;
+                    var balanceHeight = containerData.height;
+                    var balanceWeight = containerData.maxWeight * 1000;
                     
                     Object.keys(boxesCutsize).forEach(function (parent) {
                         var items = boxesCutsize[parent];
@@ -128,14 +128,14 @@ define(['N/file'], function (file) {
                                 
                                 // **Check if Box Fits**
                                 if (box.width <= balanceWidth && box.length <= balanceLength && box.height <= balanceHeight) {
-                                    var palletsPerLayer = Math.floor((binCutsize.width * binCutsize.length) / (box.width * box.length)) || 1;
+                                    var palletsPerLayer = Math.floor((containerData.width * containerData.length) / (box.width * box.length)) || 1;
                                     var palletsPerContainer = Math.floor(box.weight / (box.netWeightPerPallet / 1000)) || 1;
                                     var grossWeight = (box.grossWeightPerPallet / 1000) * palletsPerContainer;
                                     
                                     // **Step 2: Calculate optimization score**
                                     var areaUtilization = areaOfPallet / areaOfContainer;
                                     var volumeUtilization = volumeOfPallet / volumeOfContainer;
-                                    var weightUtilization = grossWeight / (binCutsize.maxWeight || 1);
+                                    var weightUtilization = grossWeight / (containerData.maxWeight || 1);
                                     
                                     var optimizationScore = (areaUtilization) + (volumeUtilization) + (weightUtilization) + (palletsPerLayer);
                                     
@@ -154,7 +154,7 @@ define(['N/file'], function (file) {
                         // **Step 4: Push the selected best box to containerListCutsize**
                         if (bestBox) {
                             
-                            var palletsPerLayer = Math.floor((binCutsize.width * binCutsize.length) / (bestBox.width * bestBox.length)) || 1;
+                            var palletsPerLayer = Math.floor((containerData.width * containerData.length) / (bestBox.width * bestBox.length)) || 1;
                             var palletsPerContainer = Math.floor(bestBox.weight / (bestBox.netWeightPerPallet / 1000)) || 1;
                             var palletNetWeight = (bestBox.netWeightPerPallet / 1000) * palletsPerContainer;
                             var netWeight = (bestBox.netWeightPerPallet * palletsPerContainer) / 1000;
@@ -162,7 +162,7 @@ define(['N/file'], function (file) {
                             
                             var decimalGrossWeight = palletNetWeight + grossWeight;
                             var weight = Math.floor(decimalGrossWeight - palletNetWeight);
-                            var maxLayers = binCutsize.height / bestBox.height;
+                            var maxLayers = containerData.height / bestBox.height;
                             var noOfPallets = Math.floor(bestBox.weight / (bestBox.netWeightPerPallet / 1000)) || 1;
                             var noOfContainers = noOfPallets / palletsPerContainer || 1;
                             var reamsPerContainer = Math.round(palletsPerContainer * (bestBox.netWeightPerPallet / bestBox.uomConversionRates.ream));
@@ -176,11 +176,11 @@ define(['N/file'], function (file) {
                                 totalWeight = 0;
                                 palletsPerContainer = (box.weight * 1000) / totalNetWeightPerPallet;
                                 noOfPallets = (box.weight * 1000) / totalNetWeightPerPallet;
-                                palletsPerLayer = (binCutsize.width * binCutsize.length) / (box.width * box.length) || 1;
+                                palletsPerLayer = (containerData.width * containerData.length) / (box.width * box.length) || 1;
                                 palletNetWeight = (box.netWeightPerPallet / 1000) * palletsPerContainer;
                                 grossWeight = (box.grossWeightPerPallet / 1000) * palletsPerContainer;
                                 netWeight = (box.netWeightPerPallet * palletsPerContainer) / 1000;
-                                maxLayers = binCutsize.height / box.height;
+                                maxLayers = containerData.height / box.height;
                                 noOfContainers = noOfPallets / palletsPerContainer || 1;
                                 decimalGrossWeight = palletNetWeight + grossWeight;
                                 weight = decimalGrossWeight - palletNetWeight;
@@ -188,7 +188,7 @@ define(['N/file'], function (file) {
                                 boxesPerContainer = (weight * 1000) / box.uomConversionRates.box;
                             }
                             
-                            if (binCutsize.size === '20') {
+                            if (containerData.size === '20') {
                                 if (palletsPerContainer > 24) {
                                     palletsPerContainer = 24;
                                 }
@@ -210,7 +210,7 @@ define(['N/file'], function (file) {
                                 internalId: bestBox.internalId,
                                 displayName: bestBox.displayName,
                                 weight: bestBox.weight,
-                                maxWeightTon: binCutsize.maxWeight,
+                                maxWeightTon: containerData.maxWeight,
                                 grossWeight: grossWeight,
                                 netWeight: netWeight,
                                 reamsPerContainer: reamsPerContainer,
@@ -243,7 +243,7 @@ define(['N/file'], function (file) {
                                     width: bestBox.width,
                                     height: bestBox.height,
                                     weight: bestBox.weight,
-                                    maxWeightTon: binCutsize.maxWeight,
+                                    maxWeightTon: containerData.maxWeight,
                                     netWeightPerPallet: bestBox.netWeightPerPallet,
                                     grossWeightPerPallet: bestBox.grossWeightPerPallet,
                                     reamsPerContainer: reamsPerContainer,
@@ -315,24 +315,24 @@ define(['N/file'], function (file) {
                                 var palletsPerContainer = Math.floor((box.weight * 1000) / totalNetWeightPerPallet);
                                 var tempTotalPallets = totalPalletsPerContainer + palletsPerContainer;
                                 
-                                if (!binCutsize.maxWeight || binCutsize.maxWeight === 0) {
+                                if (!containerData.maxWeight || containerData.maxWeight === 0) {
                                     // No max weight defined → assume unlimited
-                                    binCutsize.maxWeight = Infinity;
+                                    containerData.maxWeight = Infinity;
                                 }
                                 
                                 //
                                 // log.debug('totalNetWeightPerPallet', totalNetWeightPerPallet);
                                 // log.debug('tempTotalPallets', tempTotalPallets);
-                                if (tempTotalPallets <= binCutsize.maxWeight) {
+                                if (tempTotalPallets <= containerData.maxWeight) {
                                     // ✅ Safe to add
                                     totalPalletsPerContainer = tempTotalPallets;
                                     
                                     var noOfPallets = palletsPerContainer;
-                                    var palletsPerLayer = Math.floor((binCutsize.width * binCutsize.length) / (box.width * box.length)) || 1;
+                                    var palletsPerLayer = Math.floor((containerData.width * containerData.length) / (box.width * box.length)) || 1;
                                     var palletNetWeight = (box.netWeightPerPallet / 1000) * palletsPerContainer;
                                     var grossWeight = (box.grossWeightPerPallet / 1000) * palletsPerContainer;
                                     var netWeight = (box.netWeightPerPallet * palletsPerContainer) / 1000;
-                                    var maxLayers = Math.floor(binCutsize.height / box.height);
+                                    var maxLayers = Math.floor(containerData.height / box.height);
                                     var noOfContainers = noOfPallets / palletsPerContainer || 1;
                                     var decimalGrossWeight = palletNetWeight + grossWeight;
                                     var weight = Math.floor(decimalGrossWeight - palletNetWeight);
@@ -346,11 +346,11 @@ define(['N/file'], function (file) {
                                         
                                         palletsPerContainer = (box.weight * 1000) / totalNetWeightPerPallet;
                                         noOfPallets = palletsPerContainer;
-                                        palletsPerLayer = (binCutsize.width * binCutsize.length) / (box.width * box.length) || 1;
+                                        palletsPerLayer = (containerData.width * containerData.length) / (box.width * box.length) || 1;
                                         palletNetWeight = (box.netWeightPerPallet / 1000) * palletsPerContainer;
                                         grossWeight = (box.grossWeightPerPallet / 1000) * palletsPerContainer;
                                         netWeight = (box.netWeightPerPallet * palletsPerContainer) / 1000;
-                                        maxLayers = binCutsize.height / box.height;
+                                        maxLayers = containerData.height / box.height;
                                         noOfContainers = noOfPallets / palletsPerContainer || 1;
                                         decimalGrossWeight = palletNetWeight + grossWeight;
                                         weight = decimalGrossWeight - palletNetWeight;
@@ -375,7 +375,7 @@ define(['N/file'], function (file) {
                                         internalId: box.internalId,
                                         displayName: box.displayName,
                                         weight: box.weight,
-                                        maxWeightTon: binCutsize.maxWeight,
+                                        maxWeightTon: containerData.maxWeight,
                                         grossWeight: grossWeight,
                                         netWeight: netWeight,
                                         reamsPerContainer: reamsPerContainer,
@@ -408,7 +408,7 @@ define(['N/file'], function (file) {
                                             width: box.width,
                                             height: box.height,
                                             weight: box.weight,
-                                            maxWeightTon: binCutsize.maxWeight,
+                                            maxWeightTon: containerData.maxWeight,
                                             netWeightPerPallet: box.netWeightPerPallet,
                                             grossWeightPerPallet: box.grossWeightPerPallet,
                                             reamsPerContainer: reamsPerContainer,
@@ -426,7 +426,7 @@ define(['N/file'], function (file) {
                                     }
                                     
                                   //  log.debug('palletspercontainer push 1', palletsPerContainer);
-                                    if (Number(palletsPerContainer) === Number(binCutsize.maxWeight)) {
+                                    if (Number(palletsPerContainer) === Number(containerData.maxWeight)) {
                                         containerFull = true;
                                     }
                                     
@@ -435,7 +435,7 @@ define(['N/file'], function (file) {
                                 //    log.debug('containerFull', containerFull);
                                     if (palletsPerContainer > 0 && containerFull === false) {
                                         // ⚠️ Exceeds maxWeight, reduce box.weight step by step
-                                        while (palletsPerContainer > 0 && (totalPalletsPerContainer + palletsPerContainer) > binCutsize.maxWeight) {
+                                        while (palletsPerContainer > 0 && (totalPalletsPerContainer + palletsPerContainer) > containerData.maxWeight) {
                                             box.weight -= 1; // reduce 1 unit
                                             palletsPerContainer = Math.floor((box.weight * 1000) / totalNetWeightPerPallet);
                                         }
@@ -447,11 +447,11 @@ define(['N/file'], function (file) {
                                         balanceWeight = tempTotalPallets - totalPalletsPerContainer;
                                         
                                         var noOfPallets = palletsPerContainer;
-                                        var palletsPerLayer = Math.floor((binCutsize.width * binCutsize.length) / (box.width * box.length)) || 1;
+                                        var palletsPerLayer = Math.floor((containerData.width * containerData.length) / (box.width * box.length)) || 1;
                                         var palletNetWeight = (box.netWeightPerPallet / 1000) * palletsPerContainer;
                                         var grossWeight = (box.grossWeightPerPallet / 1000) * palletsPerContainer;
                                         var netWeight = (box.netWeightPerPallet * palletsPerContainer) / 1000;
-                                        var maxLayers = Math.floor(binCutsize.height / box.height);
+                                        var maxLayers = Math.floor(containerData.height / box.height);
                                         var noOfContainers = noOfPallets / palletsPerContainer || 1;
                                         var decimalGrossWeight = palletNetWeight + grossWeight;
                                         var weight = Math.floor(decimalGrossWeight - palletNetWeight);
@@ -466,11 +466,11 @@ define(['N/file'], function (file) {
                                             totalWeight = 0;
                                             palletsPerContainer = (box.weight * 1000) / totalNetWeightPerPallet;
                                             noOfPallets = palletsPerContainer;
-                                            palletsPerLayer = (binCutsize.width * binCutsize.length) / (box.width * box.length) || 1;
+                                            palletsPerLayer = (containerData.width * containerData.length) / (box.width * box.length) || 1;
                                             palletNetWeight = (box.netWeightPerPallet / 1000) * palletsPerContainer;
                                             grossWeight = (box.grossWeightPerPallet / 1000) * palletsPerContainer;
                                             netWeight = (box.netWeightPerPallet * palletsPerContainer) / 1000;
-                                            maxLayers = binCutsize.height / box.height;
+                                            maxLayers = containerData.height / box.height;
                                             noOfContainers = noOfPallets / palletsPerContainer || 1;
                                             decimalGrossWeight = palletNetWeight + grossWeight;
                                             weight = decimalGrossWeight - palletNetWeight;
@@ -495,7 +495,7 @@ define(['N/file'], function (file) {
                                             internalId: box.internalId,
                                             displayName: box.displayName,
                                             weight: box.weight,
-                                            maxWeightTon: binCutsize.maxWeight,
+                                            maxWeightTon: containerData.maxWeight,
                                             grossWeight: grossWeight,
                                             netWeight: netWeight,
                                             reamsPerContainer: reamsPerContainer,
@@ -529,7 +529,7 @@ define(['N/file'], function (file) {
                                                 width: box.width,
                                                 height: box.height,
                                                 weight: box.weight,
-                                                maxWeightTon: binCutsize.maxWeight,
+                                                maxWeightTon: containerData.maxWeight,
                                                 netWeightPerPallet: box.netWeightPerPallet,
                                                 grossWeightPerPallet: box.grossWeightPerPallet,
                                                 reamsPerContainer: reamsPerContainer,
@@ -560,11 +560,11 @@ define(['N/file'], function (file) {
                                         containerIndex++;
                                         
                                         var noOfPallets = palletsPerContainer;
-                                        var palletsPerLayer = Math.floor((binCutsize.width * binCutsize.length) / (box.width * box.length)) || 1;
+                                        var palletsPerLayer = Math.floor((containerData.width * containerData.length) / (box.width * box.length)) || 1;
                                         var palletNetWeight = (box.netWeightPerPallet / 1000) * palletsPerContainer;
                                         var grossWeight = (box.grossWeightPerPallet / 1000) * palletsPerContainer;
                                         var netWeight = (box.netWeightPerPallet * palletsPerContainer) / 1000;
-                                        var maxLayers = Math.floor(binCutsize.height / box.height);
+                                        var maxLayers = Math.floor(containerData.height / box.height);
                                         var noOfContainers = noOfPallets / palletsPerContainer || 1;
                                         var decimalGrossWeight = palletNetWeight + grossWeight;
                                         var weight = Math.floor(decimalGrossWeight - palletNetWeight);
@@ -573,7 +573,7 @@ define(['N/file'], function (file) {
                                         
                                         totalNetWeightPerContainer += netWeight;
                                         lastContainerNetWeight = netWeight;
-                                        lastContainerFCLNetWeight = (((binCutsize.maxWeight / items.length) * netWeight) / 1000).toFixed(3);
+                                        lastContainerFCLNetWeight = (((containerData.maxWeight / items.length) * netWeight) / 1000).toFixed(3);
                                         // log.debug('totalNetWeightPerContainerxxx', totalNetWeightPerContainer);
                                         // log.debug('lastContainerFCLNetWeight', lastContainerFCLNetWeight);
                                         
@@ -583,11 +583,11 @@ define(['N/file'], function (file) {
                                             totalWeight = 0;
                                             palletsPerContainer = (box.weight * 1000) / totalNetWeightPerPallet;
                                             noOfPallets = palletsPerContainer;
-                                            palletsPerLayer = (binCutsize.width * binCutsize.length) / (box.width * box.length) || 1;
+                                            palletsPerLayer = (containerData.width * containerData.length) / (box.width * box.length) || 1;
                                             palletNetWeight = (box.netWeightPerPallet / 1000) * palletsPerContainer;
                                             grossWeight = (box.grossWeightPerPallet / 1000) * palletsPerContainer;
                                             netWeight = (box.netWeightPerPallet * palletsPerContainer) / 1000;
-                                            maxLayers = binCutsize.height / box.height;
+                                            maxLayers = containerData.height / box.height;
                                             noOfContainers = noOfPallets / palletsPerContainer || 1;
                                             decimalGrossWeight = palletNetWeight + grossWeight;
                                             weight = decimalGrossWeight - palletNetWeight;
@@ -612,7 +612,7 @@ define(['N/file'], function (file) {
                                             internalId: box.internalId,
                                             displayName: box.displayName,
                                             weight: box.weight,
-                                            maxWeightTon: binCutsize.maxWeight,
+                                            maxWeightTon: containerData.maxWeight,
                                             grossWeight: grossWeight,
                                             netWeight: netWeight,
                                             reamsPerContainer: reamsPerContainer,
@@ -646,7 +646,7 @@ define(['N/file'], function (file) {
                                                 width: box.width,
                                                 height: box.height,
                                                 weight: box.weight,
-                                                maxWeightTon: binCutsize.maxWeight,
+                                                maxWeightTon: containerData.maxWeight,
                                                 netWeightPerPallet: box.netWeightPerPallet,
                                                 grossWeightPerPallet: box.grossWeightPerPallet,
                                                 reamsPerContainer: reamsPerContainer,
@@ -674,11 +674,11 @@ define(['N/file'], function (file) {
                                         containerIndex++;
                                         
                                         var noOfPallets = palletsPerContainer;
-                                        var palletsPerLayer = Math.floor((binCutsize.width * binCutsize.length) / (box.width * box.length)) || 1;
+                                        var palletsPerLayer = Math.floor((containerData.width * containerData.length) / (box.width * box.length)) || 1;
                                         var palletNetWeight = (box.netWeightPerPallet / 1000) * palletsPerContainer;
                                         var grossWeight = (box.grossWeightPerPallet / 1000) * palletsPerContainer;
                                         var netWeight = (box.netWeightPerPallet * palletsPerContainer) / 1000;
-                                        var maxLayers = Math.floor(binCutsize.height / box.height);
+                                        var maxLayers = Math.floor(containerData.height / box.height);
                                         var noOfContainers = noOfPallets / palletsPerContainer || 1;
                                         var decimalGrossWeight = palletNetWeight + grossWeight;
                                         var weight = Math.floor(decimalGrossWeight - palletNetWeight);
@@ -694,11 +694,11 @@ define(['N/file'], function (file) {
                                             
                                             palletsPerContainer = (box.weight * 1000) / totalNetWeightPerPallet;
                                             noOfPallets = palletsPerContainer;
-                                            palletsPerLayer = (binCutsize.width * binCutsize.length) / (box.width * box.length) || 1;
+                                            palletsPerLayer = (containerData.width * containerData.length) / (box.width * box.length) || 1;
                                             palletNetWeight = (box.netWeightPerPallet / 1000) * palletsPerContainer;
                                             grossWeight = (box.grossWeightPerPallet / 1000) * palletsPerContainer;
                                             netWeight = (box.netWeightPerPallet * palletsPerContainer) / 1000;
-                                            maxLayers = binCutsize.height / box.height;
+                                            maxLayers = containerData.height / box.height;
                                             noOfContainers = noOfPallets / palletsPerContainer || 1;
                                             decimalGrossWeight = palletNetWeight + grossWeight;
                                             weight = decimalGrossWeight - palletNetWeight;
@@ -723,7 +723,7 @@ define(['N/file'], function (file) {
                                             internalId: box.internalId,
                                             displayName: box.displayName,
                                             weight: box.weight,
-                                            maxWeightTon: binCutsize.maxWeight,
+                                            maxWeightTon: containerData.maxWeight,
                                             grossWeight: grossWeight,
                                             netWeight: netWeight,
                                             reamsPerContainer: reamsPerContainer,
@@ -755,7 +755,7 @@ define(['N/file'], function (file) {
                                                 width: box.width,
                                                 height: box.height,
                                                 weight: box.weight,
-                                                maxWeightTon: binCutsize.maxWeight,
+                                                maxWeightTon: containerData.maxWeight,
                                                 netWeightPerPallet: box.netWeightPerPallet,
                                                 grossWeightPerPallet: box.grossWeightPerPallet,
                                                 reamsPerContainer: reamsPerContainer,
@@ -784,8 +784,8 @@ define(['N/file'], function (file) {
                         });
                         
                      //   log.debug('containerindex', containerIndex);
-                        if (binCutsize.maxWeight !== Infinity) {
-                            FCLNetWeight = ((((binCutsize.maxWeight / items.length) * containerIndex) * totalNetWeightPerPallet) / 1000).toFixed(3);
+                        if (containerData.maxWeight !== Infinity) {
+                            FCLNetWeight = ((((containerData.maxWeight / items.length) * containerIndex) * totalNetWeightPerPallet) / 1000).toFixed(3);
                         } else {
                             FCLNetWeight = ((((InputQty / items.length) * containerIndex) * totalNetWeightPerPallet) / 1000).toFixed(3);
                         }
@@ -800,7 +800,7 @@ define(['N/file'], function (file) {
                         // log.debug('FCLNetWeight', FCLNetWeight);
                         // log.debug('lastcontainernetweight', lastContainerNetWeight);
                         // log.debug('grandNetWeightPallet', grandNetWeightPallet);
-                        if (InputQty >= minTolerance && InputQty <= maxTolerance && binCutsize.maxWeight !== Infinity) {
+                        if (InputQty >= minTolerance && InputQty <= maxTolerance && containerData.maxWeight !== Infinity) {
                             
                             itemRecommendation = true;
                             
@@ -883,9 +883,9 @@ define(['N/file'], function (file) {
                         // Set the initial benchmark using the first box rotation
                         var firstRotation = rotations[0];
                         var initialRemainingDimensions = {
-                            remainingLength: binCutsize.length - z,
-                            remainingWidth: binCutsize.width - x,
-                            remainingHeight: binCutsize.height - y
+                            remainingLength: containerData.length - z,
+                            remainingWidth: containerData.width - x,
+                            remainingHeight: containerData.height - y
                         };
                         
                         
@@ -896,9 +896,9 @@ define(['N/file'], function (file) {
                         
                         // Define current position for each box before checking its fit
                         var currentPosition = {
-                            remainingLength: binCutsize.length - z,
-                            remainingWidth: binCutsize.width - totalWidth,
-                            remainingHeight: binCutsize.height - y
+                            remainingLength: containerData.length - z,
+                            remainingWidth: containerData.width - totalWidth,
+                            remainingHeight: containerData.height - y
                         };
                         
                         // Variables to hold the best fits
@@ -914,13 +914,13 @@ define(['N/file'], function (file) {
                                 var isLastBox = remainingBoxes.length === 0;
                                 
                                 // Prioritize boxes with LONGER WIDTH than LENGTH
-                                if (rotatedBox.width > rotatedBox.length && totalWidth + rotatedBox.width <= binCutsize.width) {
+                                if (rotatedBox.width > rotatedBox.length && totalWidth + rotatedBox.width <= containerData.width) {
                                     if (!bestFitWithLongerWidth || rotatedBox.weight < bestFitWithLongerWidth.weight) {
                                         bestFitWithLongerWidth = rotatedBox;
                                     }
                                 }
                                 // Otherwise, consider using a shorter width for the last box scenario
-                                else if (totalWidth + rotatedBox.length <= binCutsize.width) {
+                                else if (totalWidth + rotatedBox.length <= containerData.width) {
                                     if (!bestFitWithShorterWidth || rotatedBox.weight < bestFitWithShorterWidth.weight) {
                                         bestFitWithShorterWidth = rotatedBox;
                                     }
@@ -975,7 +975,7 @@ define(['N/file'], function (file) {
                             
                             var occupiedHeightAtPosition = occupiedHeights[positionKey];
                             
-                            if (occupiedHeightAtPosition + bestFitRotation.height <= binCutsize.height) {
+                            if (occupiedHeightAtPosition + bestFitRotation.height <= containerData.height) {
                                 palletsPerLayerCutsize++;
                                 
                                 if (!heightMap[positionKey]) {
@@ -985,7 +985,7 @@ define(['N/file'], function (file) {
                                 }
                                 
                                 var minOccupiedHeight = Math.min.apply(null, Object.values(heightMap)) || 0;
-                                var remainingHeight = binCutsize.height - minOccupiedHeight;
+                                var remainingHeight = containerData.height - minOccupiedHeight;
                                 
                                 totPalletsPerLayer++;
                                 
@@ -997,8 +997,8 @@ define(['N/file'], function (file) {
                                     box: bestFitRotation,
                                     color: currentItemColor,
                                     remainingDimensions: {
-                                        remainingLength: binCutsize.length - z,
-                                        remainingWidth: binCutsize.width - x,
+                                        remainingLength: containerData.length - z,
+                                        remainingWidth: containerData.width - x,
                                         remainingHeight: remainingHeight
                                     },
                                     type: box.type,
@@ -1026,14 +1026,14 @@ define(['N/file'], function (file) {
                                 grandTotalCutsize += bestFitRotation.price;
                                 x += bestFitRotation.width;
                                 
-                                if (x + bestFitRotation.width > binCutsize.width) {
+                                if (x + bestFitRotation.width > containerData.width) {
                                     x = 0;
                                     z += bestFitRotation.length;
                                 }
                                 
                                 var layers = parseInt(bestFitRotation.layer.slice(0, -1));
                                 
-                                if (z + bestFitRotation.length > binCutsize.length) {
+                                if (z + bestFitRotation.length > containerData.length) {
                                     if (layerCountCutsize + 1 < layers) {
                                         z = 0;
                                         y += bestFitRotation.height;
@@ -1046,9 +1046,9 @@ define(['N/file'], function (file) {
                                 
                                 
                                 occupiedHeights[positionKey] = Math.max(occupiedHeightAtPosition, occupiedHeightAtPosition + bestFitRotation.height);
-                                balanceLength = binCutsize.length - z;
-                                balanceWidth = binCutsize.width - x;
-                                balanceHeight = binCutsize.height - occupiedHeights[positionKey];
+                                balanceLength = containerData.length - z;
+                                balanceWidth = containerData.width - x;
+                                balanceHeight = containerData.height - occupiedHeights[positionKey];
                             }
                             
                         } else {
@@ -1079,9 +1079,9 @@ define(['N/file'], function (file) {
                             }
                             
                             if (canFit({
-                                remainingLength: binCutsize.length,
-                                remainingWidth: binCutsize.width,
-                                remainingHeight: binCutsize.height
+                                remainingLength: containerData.length,
+                                remainingWidth: containerData.width,
+                                remainingHeight: containerData.height
                             }, box)) {
                                 packedBoxesCutsize.push({
                                     x: x,
@@ -1091,9 +1091,9 @@ define(['N/file'], function (file) {
                                     box: box,
                                     color: currentItemColor,
                                     remainingDimensions: {
-                                        remainingLength: binCutsize.length - box.length,
-                                        remainingWidth: binCutsize.width - box.width,
-                                        remainingHeight: binCutsize.height - box.height
+                                        remainingLength: containerData.length - box.length,
+                                        remainingWidth: containerData.width - box.width,
+                                        remainingHeight: containerData.height - box.height
                                     },
                                     type: box.type,
                                     product: box.product,
@@ -1156,7 +1156,7 @@ define(['N/file'], function (file) {
                 
                 if (hasCutsize) {
                     mergeObjects(boxes, boxesCutsize);
-                    mergeObjects(bin, binCutsize);
+                    mergeObjects(bin, containerData);
                 }
                 // Normalize and flatten all box items
                 Object.keys(boxes).forEach(function (parent) {
@@ -1172,7 +1172,7 @@ define(['N/file'], function (file) {
                             var palletsAfterAddQty = Math.floor(((qtyToAdd + InputQty) * 1000) / totalNetWeightPerPallet);
                             // log.debug('palletsAfterAddQty', palletsAfterAddQty);
                             // log.debug('qtyToAdd', qtyToAdd);
-                            while (palletsAfterAddQty > 0 && palletsAfterAddQty > box.binCutsize.maxWeight) {
+                            while (palletsAfterAddQty > 0 && palletsAfterAddQty > box.containerData.maxWeight) {
                                 qtyToAdd -= 0.1; // reduce 1 unit
                                 palletsAfterAddQty = Math.floor(((qtyToAdd + InputQty) * 1000) / totalNetWeightPerPallet);
                             }
@@ -1336,7 +1336,7 @@ define(['N/file'], function (file) {
         var sortedBoxesCutsize = sortByWeightAndVolume(boxesCutsize);
         
         // Cutsize, Folio, Mixed Calculation
-        greedyBinPacking(sortedBoxesCutsize, binCutsize);
+        greedyBinPacking(sortedBoxesCutsize, containerData);
         
         
         var recommendedItems = 0;
@@ -1407,9 +1407,9 @@ define(['N/file'], function (file) {
                 layersUsed: layerCountForContainer,
                 palletsPerLayer: palletsPerLayer,
                 palletsPerContainer: noOfPallets,
-                width: binCutsize.width,        // Bin width for Cutsize
-                height: binCutsize.height,      // Bin height for Cutsize
-                length: binCutsize.length,      // Bin length for Cutsize
+                width: containerData.width,        // Bin width for Cutsize
+                height: containerData.height,      // Bin height for Cutsize
+                length: containerData.length,      // Bin length for Cutsize
                 containerNetWeight: containerNetWeight,
                 containerNetWeightKG: containerNetWeightKG,
                 containerGrossWeight: containerGrossWeight,
@@ -1528,7 +1528,7 @@ define(['N/file'], function (file) {
             
             return {
                 containerIndex: Number(containerNo),
-                containerSize: binCutsize,
+                containerSize: containerData,
                 totalReamsCopyPaper: (Math.floor(totalReamsCutsize) || 0) + ' RM',
                 totalBoxesCopyPaper: (Math.floor(totalBoxesCutsize) || 0) + ' CAR',
                 totalPalletsCopyPaper: (Math.floor(totalPalletsCopyPaper) || 0) + ' PAL',
