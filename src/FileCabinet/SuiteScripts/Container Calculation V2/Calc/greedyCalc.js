@@ -1,4 +1,7 @@
-define(['N/log'], function(log) {
+/**
+ * @NApiVersion 2.1
+ */
+define(['N/file'], function (file) {
     
     /**
      * Container Loading Calculator with Mixed Loading Support
@@ -92,7 +95,7 @@ define(['N/log'], function(log) {
                 const mixedCapacity = this.calculateMixedLoading(containerData, variants);
                 
                 // Try single container first (including mixed loading)
-                const singleContainerResults = this.trySingleContainer(targetWeightKg, variants, variantCapacities, mixedCapacity);
+                const singleContainerResults = this.trySingleContainer(targetWeightKg, variants, variantCapacities, mixedCapacity, tolerance);
                 
                 if (singleContainerResults.feasible) {
                     if (!bestSolution || singleContainerResults.solution.excess < bestSolution.excess) {
@@ -236,7 +239,7 @@ define(['N/log'], function(log) {
                 maxLayersPerVariant[key] = Math.floor(containerData.height / variants[key].height);
             });
             
-            // Test different combinations of layers
+            // Test different combinations of layers - PRIORITIZE OPTIMAL STACKING
             for (let i = 0; i < variantKeys.length; i++) {
                 for (let j = i; j < variantKeys.length; j++) {
                     const variant1Key = variantKeys[i];
@@ -247,17 +250,23 @@ define(['N/log'], function(log) {
                     // Skip if same variant (handled by single variant logic)
                     if (i === j) continue;
                     
-                    // Try different layer distributions
-                    for (let layers1 = 1; layers1 <= maxLayersPerVariant[variant1Key]; layers1++) {
-                        for (let layers2 = 1; layers2 <= maxLayersPerVariant[variant2Key]; layers2++) {
-                            const totalHeight = (layers1 * variant1.height) + (layers2 * variant2.height);
+                    // Sort variants by weight (heavier should go to bottom)
+                    const heavierVariant = variant1.grossWeight > variant2.grossWeight ? variant1 : variant2;
+                    const lighterVariant = variant1.grossWeight > variant2.grossWeight ? variant2 : variant1;
+                    const heavierKey = variant1.grossWeight > variant2.grossWeight ? variant1Key : variant2Key;
+                    const lighterKey = variant1.grossWeight > variant2.grossWeight ? variant2Key : variant1Key;
+                    
+                    // Try different layer distributions (heavier variant at bottom)
+                    for (let heavyLayers = 1; heavyLayers <= maxLayersPerVariant[heavierKey]; heavyLayers++) {
+                        for (let lightLayers = 1; lightLayers <= maxLayersPerVariant[lighterKey]; lightLayers++) {
+                            const totalHeight = (heavyLayers * heavierVariant.height) + (lightLayers * lighterVariant.height);
                             
                             if (totalHeight <= containerData.height) {
-                                const totalPallets = (layers1 + layers2) * bestFloorLayout.palletsPerLayer;
-                                const totalNetWeight = (layers1 * bestFloorLayout.palletsPerLayer * variant1.netWeight) +
-                                    (layers2 * bestFloorLayout.palletsPerLayer * variant2.netWeight);
-                                const totalGrossWeight = (layers1 * bestFloorLayout.palletsPerLayer * variant1.grossWeight) +
-                                    (layers2 * bestFloorLayout.palletsPerLayer * variant2.grossWeight);
+                                const totalPallets = (heavyLayers + lightLayers) * bestFloorLayout.palletsPerLayer;
+                                const totalNetWeight = (heavyLayers * bestFloorLayout.palletsPerLayer * heavierVariant.netWeight) +
+                                    (lightLayers * bestFloorLayout.palletsPerLayer * lighterVariant.netWeight);
+                                const totalGrossWeight = (heavyLayers * bestFloorLayout.palletsPerLayer * heavierVariant.grossWeight) +
+                                    (lightLayers * bestFloorLayout.palletsPerLayer * lighterVariant.grossWeight);
                                 
                                 if (totalGrossWeight / 1000 <= containerData.maxWeight) {
                                     mixedStrategies.push({
@@ -268,22 +277,24 @@ define(['N/log'], function(log) {
                                         totalHeight,
                                         layers: [
                                             {
-                                                variant: variant1Key,
-                                                layerCount: layers1,
+                                                variant: heavierKey,
+                                                layerCount: heavyLayers,
                                                 palletsPerLayer: bestFloorLayout.palletsPerLayer,
-                                                totalPallets: layers1 * bestFloorLayout.palletsPerLayer,
-                                                netWeight: layers1 * bestFloorLayout.palletsPerLayer * variant1.netWeight,
-                                                grossWeight: layers1 * bestFloorLayout.palletsPerLayer * variant1.grossWeight,
-                                                height: variant1.height
+                                                totalPallets: heavyLayers * bestFloorLayout.palletsPerLayer,
+                                                netWeight: heavyLayers * bestFloorLayout.palletsPerLayer * heavierVariant.netWeight,
+                                                grossWeight: heavyLayers * bestFloorLayout.palletsPerLayer * heavierVariant.grossWeight,
+                                                height: heavierVariant.height,
+                                                position: 'bottom' // Heavy pallets at bottom
                                             },
                                             {
-                                                variant: variant2Key,
-                                                layerCount: layers2,
+                                                variant: lighterKey,
+                                                layerCount: lightLayers,
                                                 palletsPerLayer: bestFloorLayout.palletsPerLayer,
-                                                totalPallets: layers2 * bestFloorLayout.palletsPerLayer,
-                                                netWeight: layers2 * bestFloorLayout.palletsPerLayer * variant2.netWeight,
-                                                grossWeight: layers2 * bestFloorLayout.palletsPerLayer * variant2.grossWeight,
-                                                height: variant2.height
+                                                totalPallets: lightLayers * bestFloorLayout.palletsPerLayer,
+                                                netWeight: lightLayers * bestFloorLayout.palletsPerLayer * lighterVariant.netWeight,
+                                                grossWeight: lightLayers * bestFloorLayout.palletsPerLayer * lighterVariant.grossWeight,
+                                                height: lighterVariant.height,
+                                                position: 'top' // Light pallets on top
                                             }
                                         ],
                                         floorLayout: bestFloorLayout
@@ -295,7 +306,7 @@ define(['N/log'], function(log) {
                 }
             }
             
-            // Sort by total net weight (descending)
+            // Sort by total net weight (descending) to get maximum utilization
             mixedStrategies.sort((a, b) => b.totalNetWeight - a.totalNetWeight);
             
             return mixedStrategies.length > 0 ? mixedStrategies[0] : null;
@@ -311,11 +322,44 @@ define(['N/log'], function(log) {
         /**
          * Try single container solutions including mixed loading
          */
-        trySingleContainer(targetWeightKg, variants, variantCapacities, mixedCapacity) {
+        trySingleContainer(targetWeightKg, variants, variantCapacities, mixedCapacity, tolerance) {
             let bestSolution = null;
             let minExcess = Infinity;
             
-            // Test single variant solutions
+            // Parse tolerance percentage
+            const toleranceDecimal = this.parseTolerancePercent(tolerance);
+            
+            // PRIORITY 1: Test mixed loading solution first (better utilization)
+            if (mixedCapacity) {
+                // Check if mixed loading can handle the target weight (allowing shortfall within tolerance)
+                const mixedDeficit = targetWeightKg - mixedCapacity.totalNetWeight;
+                const mixedExcess = mixedCapacity.totalNetWeight - targetWeightKg;
+                const deficitPercentage = Math.abs(mixedDeficit) / targetWeightKg;
+                
+                // Accept mixed loading if:
+                // 1. It meets or exceeds target, OR
+                // 2. Shortfall is within tolerance percentage
+                if (mixedExcess >= 0 || deficitPercentage <= toleranceDecimal) {
+                    bestSolution = {
+                        type: 'mixed',
+                        ...mixedCapacity,
+                        excess: Math.max(0, mixedExcess), // Don't show negative excess
+                        shortfall: Math.max(0, mixedDeficit), // Track shortfall if any
+                        withinTolerance: deficitPercentage <= toleranceDecimal
+                    };
+                    minExcess = Math.max(0, mixedExcess);
+                    
+                    // If mixed loading is within tolerance, prefer it over single variants
+                    if (deficitPercentage <= toleranceDecimal * 0.5) { // Within half tolerance
+                        return {
+                            feasible: true,
+                            solution: bestSolution
+                        };
+                    }
+                }
+            }
+            
+            // PRIORITY 2: Test single variant solutions only if mixed loading doesn't work well
             Object.keys(variants).forEach(layer => {
                 const variant = variants[layer];
                 const capacity = variantCapacities[layer];
@@ -328,7 +372,8 @@ define(['N/log'], function(log) {
                     const actualWeight = requiredPallets * variant.netWeight;
                     const excess = actualWeight - targetWeightKg;
                     
-                    if (excess < minExcess) {
+                    // Only consider single variant if it's significantly better than mixed loading
+                    if (excess >= 0 && excess < minExcess && (!bestSolution || excess < bestSolution.excess * 0.8)) {
                         minExcess = excess;
                         bestSolution = {
                             type: 'single',
@@ -341,20 +386,6 @@ define(['N/log'], function(log) {
                     }
                 }
             });
-            
-            // Test mixed loading solution
-            if (mixedCapacity && mixedCapacity.totalNetWeight >= targetWeightKg) {
-                const excess = mixedCapacity.totalNetWeight - targetWeightKg;
-                
-                if (excess < minExcess) {
-                    minExcess = excess;
-                    bestSolution = {
-                        type: 'mixed',
-                        ...mixedCapacity,
-                        excess: excess
-                    };
-                }
-            }
             
             return {
                 feasible: bestSolution !== null,
@@ -369,63 +400,7 @@ define(['N/log'], function(log) {
             let bestSolution = null;
             let minExcess = Infinity;
             
-            // Strategy 1: Fill one container completely with single variant, then fill second with remaining
-            Object.keys(variants).forEach(firstLayer => {
-                const firstVariant = variants[firstLayer];
-                const firstCapacity = variantCapacities[firstLayer];
-                
-                if (!firstCapacity || firstCapacity.maxPallets === 0) return;
-                
-                // Fill first container completely
-                const firstContainerPallets = firstCapacity.maxPallets;
-                const firstContainerWeight = firstContainerPallets * firstVariant.netWeight;
-                const remainingWeight = targetWeightKg - firstContainerWeight;
-                
-                if (remainingWeight <= 0) return;
-                
-                // Try different variants for second container
-                Object.keys(variants).forEach(secondLayer => {
-                    const secondVariant = variants[secondLayer];
-                    const secondCapacity = variantCapacities[secondLayer];
-                    
-                    if (!secondCapacity || secondCapacity.maxPallets === 0) return;
-                    
-                    const requiredSecondPallets = Math.ceil(remainingWeight / secondVariant.netWeight);
-                    
-                    if (requiredSecondPallets <= secondCapacity.maxPallets) {
-                        const actualSecondWeight = requiredSecondPallets * secondVariant.netWeight;
-                        const totalWeight = firstContainerWeight + actualSecondWeight;
-                        const excess = totalWeight - targetWeightKg;
-                        
-                        if (excess >= 0 && excess < minExcess) {
-                            minExcess = excess;
-                            bestSolution = {
-                                type: 'dual-single',
-                                container1: {
-                                    type: 'single',
-                                    variant: firstLayer,
-                                    pallets: firstContainerPallets,
-                                    netWeight: firstContainerWeight,
-                                    grossWeight: firstContainerPallets * firstVariant.grossWeight,
-                                    status: "FULL"
-                                },
-                                container2: {
-                                    type: 'single',
-                                    variant: secondLayer,
-                                    pallets: requiredSecondPallets,
-                                    netWeight: actualSecondWeight,
-                                    grossWeight: requiredSecondPallets * secondVariant.grossWeight,
-                                    status: "PARTIAL"
-                                },
-                                totalWeight: totalWeight,
-                                excess: excess
-                            };
-                        }
-                    }
-                });
-            });
-            
-            // Strategy 2: Use mixed loading in first container if available
+            // PRIORITY 1: Try mixed loading in first container (best utilization)
             if (mixedCapacity) {
                 const remainingWeight = targetWeightKg - mixedCapacity.totalNetWeight;
                 
@@ -451,7 +426,7 @@ define(['N/log'], function(log) {
                                     container1: {
                                         type: 'mixed',
                                         ...mixedCapacity,
-                                        status: "FULL"
+                                        status: "MIXED_OPTIMIZED"
                                     },
                                     container2: {
                                         type: 'single',
@@ -468,6 +443,64 @@ define(['N/log'], function(log) {
                         }
                     });
                 }
+            }
+            
+            // PRIORITY 2: Traditional dual container strategy (only if mixed loading doesn't work well)
+            if (!bestSolution || minExcess > targetWeightKg * 0.1) {
+                Object.keys(variants).forEach(firstLayer => {
+                    const firstVariant = variants[firstLayer];
+                    const firstCapacity = variantCapacities[firstLayer];
+                    
+                    if (!firstCapacity || firstCapacity.maxPallets === 0) return;
+                    
+                    // Fill first container completely
+                    const firstContainerPallets = firstCapacity.maxPallets;
+                    const firstContainerWeight = firstContainerPallets * firstVariant.netWeight;
+                    const remainingWeight = targetWeightKg - firstContainerWeight;
+                    
+                    if (remainingWeight <= 0) return;
+                    
+                    // Try different variants for second container
+                    Object.keys(variants).forEach(secondLayer => {
+                        const secondVariant = variants[secondLayer];
+                        const secondCapacity = variantCapacities[secondLayer];
+                        
+                        if (!secondCapacity || secondCapacity.maxPallets === 0) return;
+                        
+                        const requiredSecondPallets = Math.ceil(remainingWeight / secondVariant.netWeight);
+                        
+                        if (requiredSecondPallets <= secondCapacity.maxPallets) {
+                            const actualSecondWeight = requiredSecondPallets * secondVariant.netWeight;
+                            const totalWeight = firstContainerWeight + actualSecondWeight;
+                            const excess = totalWeight - targetWeightKg;
+                            
+                            if (excess >= 0 && excess < minExcess) {
+                                minExcess = excess;
+                                bestSolution = {
+                                    type: 'dual-single',
+                                    container1: {
+                                        type: 'single',
+                                        variant: firstLayer,
+                                        pallets: firstContainerPallets,
+                                        netWeight: firstContainerWeight,
+                                        grossWeight: firstContainerPallets * firstVariant.grossWeight,
+                                        status: "FULL"
+                                    },
+                                    container2: {
+                                        type: 'single',
+                                        variant: secondLayer,
+                                        pallets: requiredSecondPallets,
+                                        netWeight: actualSecondWeight,
+                                        grossWeight: requiredSecondPallets * secondVariant.grossWeight,
+                                        status: "PARTIAL"
+                                    },
+                                    totalWeight: totalWeight,
+                                    excess: excess
+                                };
+                            }
+                        }
+                    });
+                });
             }
             
             return {
@@ -999,7 +1032,7 @@ define(['N/log'], function(log) {
         try {
             const calculator = new ContainerLoadingCalculator();
             const result = calculator.calculateOptimalLoading(inputData);
-            log.debug('result', result)
+            log.debug('result', result);
             
             return result;
             
