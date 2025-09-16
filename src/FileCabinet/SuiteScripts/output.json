@@ -1,0 +1,98 @@
+{
+  "containers": [
+    {
+      "containerIndex": 1,
+      "containerSize": {
+        "size": "20'",
+        "length": 228,
+        "width": 90,
+        "height": 90,
+        "maxWeight": 21.71
+      },
+      "totalReamsCopyPaper": "5625 RM",
+      "totalBoxesCopyPaper": "1121 CAR",
+      "totalPalletsCopyPaper": "21 PAL",
+      "item": [
+        {
+          "product": "1CZE-QP-080-A04-500-001 : 1CZE-QP-080-A04-500-4L-001",
+          "internalId": "38239",
+          "displayName": "Quality Purple 80G A4 (500) AUTO 4L 300 R/P N",
+          "type": "cutsize",
+          "layer": 2,
+          "netWeight": "8.982",
+          "netWeightKG": "8982.000",
+          "grossWeight": "9.611",
+          "grossWeightKG": "9610.740",
+          "reams": "3600 RM",
+          "boxes": "721 CAR",
+          "palletsPerContainer": "12 PAL",
+          "palletsPerLayer": "12 PAL",
+          "productLayer": "4L",
+          "price": 0
+        },
+        {
+          "product": "1CZE-QP-080-A04-500-001 : 1CZE-QP-080-A04-500-3L-001",
+          "internalId": "38238",
+          "displayName": "Quality Purple 80G A4 (500) AUTO 3L 225 R/P N",
+          "type": "cutsize",
+          "layer": 2,
+          "netWeight": "5.052",
+          "netWeightKG": "5052.375",
+          "grossWeight": "5.406",
+          "grossWeightKG": "5406.039",
+          "reams": "2025 RM",
+          "boxes": "400 CAR",
+          "palletsPerContainer": "9 PAL",
+          "palletsPerLayer": "9 PAL",
+          "productLayer": "3L",
+          "price": 0
+        }
+      ]
+    },
+    {
+      "containerIndex": 2,
+      "containerSize": {
+        "size": "20'",
+        "length": 228,
+        "width": 90,
+        "height": 90,
+        "maxWeight": 21.71
+      },
+      "totalReamsCopyPaper": "675 RM",
+      "totalBoxesCopyPaper": "80 CAR",
+      "totalPalletsCopyPaper": "3 PAL",
+      "item": [
+        {
+          "product": "1CZE-QP-080-A04-500-001 : 1CZE-QP-080-A04-500-3L-001",
+          "internalId": "38238",
+          "displayName": "Quality Purple 80G A4 (500) AUTO 3L 225 R/P N",
+          "type": "cutsize",
+          "layer": 2,
+          "netWeight": "1.684",
+          "netWeightKG": "1684.125",
+          "grossWeight": "1.802",
+          "grossWeightKG": "1802.013",
+          "reams": "675 RM",
+          "boxes": "80 CAR",
+          "palletsPerContainer": "3 PAL",
+          "palletsPerLayer": "3 PAL",
+          "productLayer": "3L",
+          "price": 0
+        }
+      ]
+    }
+  ],
+  "recommendedItems": {
+    "option1": [
+      {
+        "type": "dedicated",
+        "action": "increase",
+        "internalId": "38239",
+        "parentID": 12522,
+        "displayName": "Quality Purple 80G A4 (500)",
+        "suggestedQty": "12.437",
+        "uom": ""
+      }
+    ]
+  }
+}

@@ -1,1755 +1,1018 @@
-/**
- * @NApiVersion 2.1
- */
-define(['N/file'], function (file) {
+define(['N/log'], function(log) {
     
-    const colors = [
-        "0x191970", // Midnight Blue
-        "0x8B0000", // Dark Red
-        "0x008000", // Green
-        "0xFFA500", // Orange
-        "0x800080", // Purple
-        "0xFFFF00", // Yellow
-        "0x00FFFF", // Cyan
-        "0xFF00FF", // Magenta
-        "0xFF4500", // Orange Red
-        "0x2E8B57", // Sea Green
-        "0x4682B4", // Steel Blue
-        "0xDAA520", // Golden Rod
-        "0xADFF2F", // Green Yellow
-        "0xFF6347", // Tomato
-        "0x9400D3", // Dark Violet
-        "0xFFD700"  // Gold
-    ];
-    
-    
-    function greedyCalcCutsize(parsedBody) {
+    /**
+     * Container Loading Calculator with Mixed Loading Support
+     * Calculates optimal container loading for paper products including mixed variant stacking
+     */
+    class ContainerLoadingCalculator {
         
-        
-        
-        var recommendedBestFitItems = [];
-        var containerListCutsize = [];
-        var packedBoxesCutsize = [];
-        var grandTotalCutsize = 0;
-        
-        
-        var layerCountCutsize = 0;
-        var palletsPerLayerCutsize = 0;
-        var allRecordCutsize = [];
-        var allContainersCutsize = [];
-        var boxesCutsize3D = [];
-        
-        var totalBalanceWeight = 0;
-        var totalNetWeightPerPallet = 0;
-        var totalPalletsPerContainer = 0;
-        var itemRecommendation = false;
-        var action = null;
-        
-        var boxesCutsize = parsedBody.boxesCutsize || [];
-        
-        
-        // container
-        var containerData = {length: 232.13, width: 92.52, height: 93.90};
-        if (boxesCutsize && typeof boxesCutsize === 'object') {
-            var firstKey = Object.keys(boxesCutsize)[0]; // Get the first product name key
-            if (firstKey && boxesCutsize[firstKey].length > 0) {
-                containerData = boxesCutsize[firstKey][0].containerData || null;
-            }
+        constructor() {
+            // Constructor intentionally empty since container data now comes from input
         }
         
-        
-        function greedyBinPacking(boxesCutsize, containerData) {
+        /**
+         * Find optimal container loading strategy including mixed loading
+         */
+        calculateOptimalLoading(input) {
+            // Extract container data and items from the new input format
+            const {boxesCutsize, containerData, tolerance, action} = input;
             
-            var hasCutsize = Object.keys(boxesCutsize).some(function (group) {
-                return boxesCutsize[group].some(function (item) {
-                    return item.type === "cutsize";
-                });
-            });
-            
-            if (hasCutsize) {
-                var x = 0, y = 0, z = 0;
-                
-                // Logic for boxes with different weights
-                var leftSideWeight = 0;
-                var rightSideWeight = 0;
-                var boxesThatFitOnX = [];
-                var totalWidth = 0;
-                var rowNumber = 0;
-                var placeOnLeft = true;
-                var occupiedHeights = [];
-                var currentBox = null;
-                var grandNetWeightPallet = 0;
-                var grandNetWeightNewContainer = 0;
-                var totalPallets = 0;
-                var lowerBound = 0;
-                var upperBound = 0;
-                var containerFull = false;
-                var totalNetWeightPerContainer = 0;
-                var totalWeight = 0;
-                var InputQty = 0;
-                var FCLNetWeight = 0;
-                var lastContainerNetWeight = 0;
-                var lastContainerFCLNetWeight = 0;
-                
-                if (Object.keys(boxesCutsize).length > 1) {
-                    
-                    var balanceWidth = containerData.width;
-                    var balanceLength = containerData.length;
-                    var balanceHeight = containerData.height;
-                    var balanceWeight = containerData.maxWeight * 1000;
-                    
-                    Object.keys(boxesCutsize).forEach(function (parent) {
-                        var items = boxesCutsize[parent];
-                        
-                        // **Sort items by volume (Largest First)**
-                        items.sort(function (a, b) {
-                            return (b.width * b.length * b.height) - (a.width * a.length * a.height);
-                        });
-                        
-                        // **Initialize variables for tracking the best optimized box**
-                        var bestBox = null;
-                        var bestOptimizationScore = null;
-                        var containerIndex = 1; // optional: track container number
-                        
-                        items.forEach(function (box) {
-                            if (box.type === 'cutsize') {
-                                
-                                if (box.baseUnitAbbreviation) {
-                                    var baseUnit = box.baseUnitAbbreviation.toLowerCase();
-                                    box.weight = (box.weight * box.uomConversionRates[baseUnit]) / box.uomConversionRates.ton;
-                                    box.maxWeightTon = box.weight;
-                                }
-                                
-                                // **Step 1: Compute Required Values**
-                                var areaOfContainer = balanceWidth * balanceLength;
-                                var volumeOfContainer = balanceWidth * balanceLength * balanceHeight;
-                                var areaOfPallet = box.width * box.length;
-                                var volumeOfPallet = box.width * box.length * box.height;
-                                
-                                // **Check if Box Fits**
-                                if (box.width <= balanceWidth && box.length <= balanceLength && box.height <= balanceHeight) {
-                                    var palletsPerLayer = Math.floor((containerData.width * containerData.length) / (box.width * box.length)) || 1;
-                                    var palletsPerContainer = Math.floor(box.weight / (box.netWeightPerPallet / 1000)) || 1;
-                                    var grossWeight = (box.grossWeightPerPallet / 1000) * palletsPerContainer;
-                                    
-                                    // **Step 2: Calculate optimization score**
-                                    var areaUtilization = areaOfPallet / areaOfContainer;
-                                    var volumeUtilization = volumeOfPallet / volumeOfContainer;
-                                    var weightUtilization = grossWeight / (containerData.maxWeight || 1);
-                                    
-                                    var optimizationScore = (areaUtilization) + (volumeUtilization) + (weightUtilization) + (palletsPerLayer);
-                                    
-                                    // **Step 3: Select the best box**
-                                    if (optimizationScore > bestOptimizationScore) {
-                                        bestOptimizationScore = optimizationScore;
-                                        bestBox = box;
-                                    }
-                                } else {
-                                    log.debug("Skipping box (does not fit)", box.product);
-                                }
-                            }
-                        });
-                        
-                      //  log.debug('bestbox', bestBox);
-                        // **Step 4: Push the selected best box to containerListCutsize**
-                        if (bestBox) {
-                            
-                            var palletsPerLayer = Math.floor((containerData.width * containerData.length) / (bestBox.width * bestBox.length)) || 1;
-                            var palletsPerContainer = Math.floor(bestBox.weight / (bestBox.netWeightPerPallet / 1000)) || 1;
-                            var palletNetWeight = (bestBox.netWeightPerPallet / 1000) * palletsPerContainer;
-                            var netWeight = (bestBox.netWeightPerPallet * palletsPerContainer) / 1000;
-                            var grossWeight = (bestBox.grossWeightPerPallet / 1000) * palletsPerContainer;
-                            
-                            var decimalGrossWeight = palletNetWeight + grossWeight;
-                            var weight = Math.floor(decimalGrossWeight - palletNetWeight);
-                            var maxLayers = containerData.height / bestBox.height;
-                            var noOfPallets = Math.floor(bestBox.weight / (bestBox.netWeightPerPallet / 1000)) || 1;
-                            var noOfContainers = noOfPallets / palletsPerContainer || 1;
-                            var reamsPerContainer = Math.round(palletsPerContainer * (bestBox.netWeightPerPallet / bestBox.uomConversionRates.ream));
-                            var boxesPerContainer = Math.floor((bestBox.weight * 1000) / bestBox.uomConversionRates.box);
-                            
-                            totalNetWeightPerContainer += netWeight;
-                            
-                            if (noOfPallets < 1 && totalNetWeightPerContainer > 0) {
-                                itemRecommendation = true;
-                                
-                                totalWeight = 0;
-                                palletsPerContainer = (box.weight * 1000) / totalNetWeightPerPallet;
-                                noOfPallets = (box.weight * 1000) / totalNetWeightPerPallet;
-                                palletsPerLayer = (containerData.width * containerData.length) / (box.width * box.length) || 1;
-                                palletNetWeight = (box.netWeightPerPallet / 1000) * palletsPerContainer;
-                                grossWeight = (box.grossWeightPerPallet / 1000) * palletsPerContainer;
-                                netWeight = (box.netWeightPerPallet * palletsPerContainer) / 1000;
-                                maxLayers = containerData.height / box.height;
-                                noOfContainers = noOfPallets / palletsPerContainer || 1;
-                                decimalGrossWeight = palletNetWeight + grossWeight;
-                                weight = decimalGrossWeight - palletNetWeight;
-                                reamsPerContainer = palletsPerContainer * (box.netWeightPerPallet / box.uomConversionRates.ream);
-                                boxesPerContainer = (weight * 1000) / box.uomConversionRates.box;
-                            }
-                            
-                            if (containerData.size === '20') {
-                                if (palletsPerContainer > 24) {
-                                    palletsPerContainer = 24;
-                                }
-                            }
-                            
-                            if (palletsPerLayer > palletsPerContainer) {
-                                palletsPerLayer = palletsPerContainer;
-                            }
-                            
-                            
-                            // push summary
-                            containerListCutsize.push({
-                                parent: parent,
-                                parentName: bestBox.parentName,
-                                parentID: bestBox.parentID,
-                                containerNo: containerIndex, // track which container
-                                type: bestBox.type,
-                                product: bestBox.product,
-                                internalId: bestBox.internalId,
-                                displayName: bestBox.displayName,
-                                weight: bestBox.weight,
-                                maxWeightTon: containerData.maxWeight,
-                                grossWeight: grossWeight,
-                                netWeight: netWeight,
-                                reamsPerContainer: reamsPerContainer,
-                                noOfPallets: palletsPerContainer,
-                                palletsPerContainer: palletsPerContainer,
-                                palletsPerLayer: palletsPerLayer,
-                                productLayer: bestBox.layer,
-                                boxesPerContainer: boxesPerContainer,
-                                recommendedItems: recommendedItems,
-                                sortedRecommendedItems: sortedRecommendedItems,
-                                totalNetWeightPerPallet: totalNetWeightPerPallet
-                            });
-                            
-                            // push pallets
-                            totalPallets = palletsPerContainer;
-                            for (var i = 0; i < palletsPerContainer; i++) {
-                                boxesCutsize3D.push({
-                                    parent: parent,
-                                    parentID: bestBox.parentID,
-                                    parentName: bestBox.parentName,
-                                    containerNo: containerIndex,
-                                    documentNo: bestBox.documentNo,
-                                    type: bestBox.type,
-                                    product: bestBox.product,
-                                    internalId: bestBox.internalId,
-                                    displayName: bestBox.displayName,
-                                    pallet: "true",
-                                    layer: bestBox.layer,
-                                    length: bestBox.length,
-                                    width: bestBox.width,
-                                    height: bestBox.height,
-                                    weight: bestBox.weight,
-                                    maxWeightTon: containerData.maxWeight,
-                                    netWeightPerPallet: bestBox.netWeightPerPallet,
-                                    grossWeightPerPallet: bestBox.grossWeightPerPallet,
-                                    reamsPerContainer: reamsPerContainer,
-                                    grossWeight: grossWeight,
-                                    netWeight: netWeight,
-                                    palletsPerContainer: palletsPerContainer,
-                                    palletsPerLayer: palletsPerLayer,
-                                    maxLayers: maxLayers,
-                                    noOfPallets: palletsPerContainer,
-                                    noOfContainers: noOfContainers,
-                                    boxesPerContainer: boxesPerContainer,
-                                    recommendedItems: recommendedItems,
-                                    sortedRecommendedItems: sortedRecommendedItems
-                                });
-                            }
-                            
-                            // **Step 5: Update Remaining Space**
-                            balanceWidth -= bestBox.width;   // Reduce available width
-                            balanceLength -= bestBox.length; // Reduce available length
-                            balanceHeight -= bestBox.height; // Reduce available height
-                            balanceWeight -= bestBox.netWeightPerPallet; // Reduce weight capacity
-                            
-                            // Remove selected box from items list
-                            items.splice(bestBox, 1);
-                            
-                        }
-                        
-                        if (boxesCutsize3D.length > 0) {
-                            allRecordCutsize.push(
-                                {
-                                    boxesCutsize3D: boxesCutsize3D,
-                                    containerListCutsize: containerListCutsize
-                                });
-                        }
-                        
-                    });
-                    
-                } else {
-                    Object.keys(boxesCutsize).forEach(function (parent) {
-                        var items = boxesCutsize[parent];
-                        
-                        // Sort items by volume (Largest First)
-                        items.sort(function (a, b) {
-                            return (b.width * b.length * b.height) - (a.width * a.length * a.height);
-                        });
-                        
-                        items.forEach(function (box) {
-                            if (box.type === 'cutsize') {
-                                totalNetWeightPerPallet += box.netWeightPerPallet;
-                             //   log.debug('box.netWeightPerPallet', box.netWeightPerPallet);
-                            }
-                        });
-                        
-                        var containerIndex = 1; // optional: track container number
-                        var balanceWeight = 0;
-                        items.forEach(function (box) {
-                            if (box.type === 'cutsize') {
-                                
-                                InputQty = box.weight;
-                                
-                                if (box.baseUnitAbbreviation) {
-                                    var baseUnit = box.baseUnitAbbreviation.toLowerCase();
-                                    box.weight = (box.weight * box.uomConversionRates[baseUnit]) / box.uomConversionRates.ton;
-                                }
-                                
-                                // === perform calculation based on totalProductWeight ===
-                                var totalWeight = 0;
-                                
-                                var palletsPerContainer = Math.floor((box.weight * 1000) / totalNetWeightPerPallet);
-                                var tempTotalPallets = totalPalletsPerContainer + palletsPerContainer;
-                                
-                                if (!containerData.maxWeight || containerData.maxWeight === 0) {
-                                    // No max weight defined → assume unlimited
-                                    containerData.maxWeight = Infinity;
-                                }
-                                
-                                //
-                                // log.debug('totalNetWeightPerPallet', totalNetWeightPerPallet);
-                                // log.debug('tempTotalPallets', tempTotalPallets);
-                                if (tempTotalPallets <= containerData.maxWeight) {
-                                    // ✅ Safe to add
-                                    totalPalletsPerContainer = tempTotalPallets;
-                                    
-                                    var noOfPallets = palletsPerContainer;
-                                    var palletsPerLayer = Math.floor((containerData.width * containerData.length) / (box.width * box.length)) || 1;
-                                    var palletNetWeight = (box.netWeightPerPallet / 1000) * palletsPerContainer;
-                                    var grossWeight = (box.grossWeightPerPallet / 1000) * palletsPerContainer;
-                                    var netWeight = (box.netWeightPerPallet * palletsPerContainer) / 1000;
-                                    var maxLayers = Math.floor(containerData.height / box.height);
-                                    var noOfContainers = noOfPallets / palletsPerContainer || 1;
-                                    var decimalGrossWeight = palletNetWeight + grossWeight;
-                                    var weight = Math.floor(decimalGrossWeight - palletNetWeight);
-                                    var reamsPerContainer = Math.floor(palletsPerContainer * (box.netWeightPerPallet / box.uomConversionRates.ream));
-                                    var boxesPerContainer = Math.floor((weight * 1000) / box.uomConversionRates.carton);
-                                    
-                                    totalNetWeightPerContainer += netWeight;
-                                    
-                                    if (noOfPallets < 1 && totalNetWeightPerContainer > 0) {
-                                        itemRecommendation = true;
-                                        
-                                        palletsPerContainer = (box.weight * 1000) / totalNetWeightPerPallet;
-                                        noOfPallets = palletsPerContainer;
-                                        palletsPerLayer = (containerData.width * containerData.length) / (box.width * box.length) || 1;
-                                        palletNetWeight = (box.netWeightPerPallet / 1000) * palletsPerContainer;
-                                        grossWeight = (box.grossWeightPerPallet / 1000) * palletsPerContainer;
-                                        netWeight = (box.netWeightPerPallet * palletsPerContainer) / 1000;
-                                        maxLayers = containerData.height / box.height;
-                                        noOfContainers = noOfPallets / palletsPerContainer || 1;
-                                        decimalGrossWeight = palletNetWeight + grossWeight;
-                                        weight = decimalGrossWeight - palletNetWeight;
-                                        reamsPerContainer = palletsPerContainer * (box.netWeightPerPallet / box.uomConversionRates.ream);
-                                        boxesPerContainer = (weight * 1000) / box.uomConversionRates.carton;
-                                    }
-                                    
-                                    if (palletsPerLayer > palletsPerContainer) {
-                                        palletsPerLayer = palletsPerContainer;
-                                    }
-                                    
-                                    var recommendedItems = {};
-                                    
-                                    // push summary
-                                    containerListCutsize.push({
-                                        parent: parent,
-                                        parentName: box.parentName,
-                                        parentID: box.parentID,
-                                        containerNo: containerIndex, // track which container
-                                        type: box.type,
-                                        product: box.product,
-                                        internalId: box.internalId,
-                                        displayName: box.displayName,
-                                        weight: box.weight,
-                                        maxWeightTon: containerData.maxWeight,
-                                        grossWeight: grossWeight,
-                                        netWeight: netWeight,
-                                        reamsPerContainer: reamsPerContainer,
-                                        noOfPallets: palletsPerContainer,
-                                        palletsPerContainer: palletsPerContainer,
-                                        palletsPerLayer: palletsPerLayer,
-                                        productLayer: box.layer,
-                                        boxesPerContainer: boxesPerContainer,
-                                        recommendedItems: recommendedItems,
-                                        sortedRecommendedItems: sortedRecommendedItems,
-                                        totalNetWeightPerPallet: totalNetWeightPerPallet
-                                    });
-                                    
-                                    // push pallets
-                                    totalPallets = palletsPerContainer;
-                                    for (var i = 0; i < palletsPerContainer; i++) {
-                                        boxesCutsize3D.push({
-                                            parent: parent,
-                                            parentID: box.parentID,
-                                            parentName: box.parentName,
-                                            containerNo: containerIndex,
-                                            documentNo: box.documentNo,
-                                            type: box.type,
-                                            product: box.product,
-                                            internalId: box.internalId,
-                                            displayName: box.displayName,
-                                            pallet: "true",
-                                            layer: box.layer,
-                                            length: box.length,
-                                            width: box.width,
-                                            height: box.height,
-                                            weight: box.weight,
-                                            maxWeightTon: containerData.maxWeight,
-                                            netWeightPerPallet: box.netWeightPerPallet,
-                                            grossWeightPerPallet: box.grossWeightPerPallet,
-                                            reamsPerContainer: reamsPerContainer,
-                                            grossWeight: grossWeight,
-                                            netWeight: netWeight,
-                                            palletsPerContainer: palletsPerContainer,
-                                            palletsPerLayer: palletsPerLayer,
-                                            maxLayers: maxLayers,
-                                            noOfPallets: palletsPerContainer,
-                                            noOfContainers: noOfContainers,
-                                            boxesPerContainer: boxesPerContainer,
-                                            recommendedItems: recommendedItems,
-                                            sortedRecommendedItems: sortedRecommendedItems
-                                        });
-                                    }
-                                    
-                                  //  log.debug('palletspercontainer push 1', palletsPerContainer);
-                                    if (Number(palletsPerContainer) === Number(containerData.maxWeight)) {
-                                        containerFull = true;
-                                    }
-                                    
-                                } else {
-                                    
-                                //    log.debug('containerFull', containerFull);
-                                    if (palletsPerContainer > 0 && containerFull === false) {
-                                        // ⚠️ Exceeds maxWeight, reduce box.weight step by step
-                                        while (palletsPerContainer > 0 && (totalPalletsPerContainer + palletsPerContainer) > containerData.maxWeight) {
-                                            box.weight -= 1; // reduce 1 unit
-                                            palletsPerContainer = Math.floor((box.weight * 1000) / totalNetWeightPerPallet);
-                                        }
-                                        
-                                        // ✅ After adjustment, fit into current container
-                                        totalPalletsPerContainer += palletsPerContainer;
-                                        
-                                        // If we reduced weight, calculate balance that should go to next container
-                                        balanceWeight = tempTotalPallets - totalPalletsPerContainer;
-                                        
-                                        var noOfPallets = palletsPerContainer;
-                                        var palletsPerLayer = Math.floor((containerData.width * containerData.length) / (box.width * box.length)) || 1;
-                                        var palletNetWeight = (box.netWeightPerPallet / 1000) * palletsPerContainer;
-                                        var grossWeight = (box.grossWeightPerPallet / 1000) * palletsPerContainer;
-                                        var netWeight = (box.netWeightPerPallet * palletsPerContainer) / 1000;
-                                        var maxLayers = Math.floor(containerData.height / box.height);
-                                        var noOfContainers = noOfPallets / palletsPerContainer || 1;
-                                        var decimalGrossWeight = palletNetWeight + grossWeight;
-                                        var weight = Math.floor(decimalGrossWeight - palletNetWeight);
-                                        var reamsPerContainer = Math.floor(palletsPerContainer * (box.netWeightPerPallet / box.uomConversionRates.ream));
-                                        var boxesPerContainer = Math.floor((weight * 1000) / box.uomConversionRates.carton);
-                                        
-                                        totalNetWeightPerContainer += netWeight;
-                                        
-                                        if (noOfPallets < 1 && totalNetWeightPerContainer > 0) {
-                                            itemRecommendation = true;
-                                            
-                                            totalWeight = 0;
-                                            palletsPerContainer = (box.weight * 1000) / totalNetWeightPerPallet;
-                                            noOfPallets = palletsPerContainer;
-                                            palletsPerLayer = (containerData.width * containerData.length) / (box.width * box.length) || 1;
-                                            palletNetWeight = (box.netWeightPerPallet / 1000) * palletsPerContainer;
-                                            grossWeight = (box.grossWeightPerPallet / 1000) * palletsPerContainer;
-                                            netWeight = (box.netWeightPerPallet * palletsPerContainer) / 1000;
-                                            maxLayers = containerData.height / box.height;
-                                            noOfContainers = noOfPallets / palletsPerContainer || 1;
-                                            decimalGrossWeight = palletNetWeight + grossWeight;
-                                            weight = decimalGrossWeight - palletNetWeight;
-                                            reamsPerContainer = palletsPerContainer * (box.netWeightPerPallet / box.uomConversionRates.ream);
-                                            boxesPerContainer = (weight * 1000) / box.uomConversionRates.carton;
-                                        }
-                                        
-                                        if (palletsPerLayer > palletsPerContainer) {
-                                            palletsPerLayer = palletsPerContainer;
-                                        }
-                                        
-                                        var recommendedItems = {};
-                                        
-                                        // push summary
-                                        containerListCutsize.push({
-                                            parent: parent,
-                                            parentID: box.parentID,
-                                            parentName: box.parentName,
-                                            containerNo: containerIndex, // track which container
-                                            type: box.type,
-                                            product: box.product,
-                                            internalId: box.internalId,
-                                            displayName: box.displayName,
-                                            weight: box.weight,
-                                            maxWeightTon: containerData.maxWeight,
-                                            grossWeight: grossWeight,
-                                            netWeight: netWeight,
-                                            reamsPerContainer: reamsPerContainer,
-                                            noOfPallets: palletsPerContainer,
-                                            palletsPerContainer: palletsPerContainer,
-                                            palletsPerLayer: palletsPerLayer,
-                                            productLayer: box.layer,
-                                            boxesPerContainer: boxesPerContainer,
-                                            recommendedItems: recommendedItems,
-                                            sortedRecommendedItems: sortedRecommendedItems,
-                                            totalNetWeightPerPallet: totalNetWeightPerPallet
-                                        });
-                                        
-                                      //  log.debug('palletspercontainer push 2', palletsPerContainer);
-                                        totalPallets = palletsPerContainer;
-                                        // push pallets
-                                        for (var i = 0; i < palletsPerContainer; i++) {
-                                            boxesCutsize3D.push({
-                                                parent: parent,
-                                                parentID: box.parentID,
-                                                parentName: box.parentName,
-                                                containerNo: containerIndex,
-                                                documentNo: box.documentNo,
-                                                type: box.type,
-                                                product: box.product,
-                                                internalId: box.internalId,
-                                                displayName: box.displayName,
-                                                pallet: "true",
-                                                layer: box.layer,
-                                                length: box.length,
-                                                width: box.width,
-                                                height: box.height,
-                                                weight: box.weight,
-                                                maxWeightTon: containerData.maxWeight,
-                                                netWeightPerPallet: box.netWeightPerPallet,
-                                                grossWeightPerPallet: box.grossWeightPerPallet,
-                                                reamsPerContainer: reamsPerContainer,
-                                                grossWeight: grossWeight,
-                                                netWeight: netWeight,
-                                                palletsPerContainer: palletsPerContainer,
-                                                palletsPerLayer: palletsPerLayer,
-                                                maxLayers: maxLayers,
-                                                noOfPallets: palletsPerContainer,
-                                                noOfContainers: noOfContainers,
-                                                boxesPerContainer: boxesPerContainer,
-                                                recommendedItems: recommendedItems,
-                                                sortedRecommendedItems: sortedRecommendedItems
-                                            });
-                                        }
-                                        
-                                    }
-                                    
-                                    if (balanceWeight > 0 || (palletsPerContainer > 0 && containerFull === true)) {
-                                        
-                                        allRecordCutsize.push({
-                                            boxesCutsize3D: boxesCutsize3D,
-                                            containerListCutsize: containerListCutsize
-                                        });
-                                        
-                                        // Create a new box object for the remaining weight
-                                        palletsPerContainer = balanceWeight;
-                                        containerIndex++;
-                                        
-                                        var noOfPallets = palletsPerContainer;
-                                        var palletsPerLayer = Math.floor((containerData.width * containerData.length) / (box.width * box.length)) || 1;
-                                        var palletNetWeight = (box.netWeightPerPallet / 1000) * palletsPerContainer;
-                                        var grossWeight = (box.grossWeightPerPallet / 1000) * palletsPerContainer;
-                                        var netWeight = (box.netWeightPerPallet * palletsPerContainer) / 1000;
-                                        var maxLayers = Math.floor(containerData.height / box.height);
-                                        var noOfContainers = noOfPallets / palletsPerContainer || 1;
-                                        var decimalGrossWeight = palletNetWeight + grossWeight;
-                                        var weight = Math.floor(decimalGrossWeight - palletNetWeight);
-                                        var reamsPerContainer = Math.floor(palletsPerContainer * (box.netWeightPerPallet / box.uomConversionRates.ream));
-                                        var boxesPerContainer = Math.floor((weight * 1000) / box.uomConversionRates.carton);
-                                        
-                                        totalNetWeightPerContainer += netWeight;
-                                        lastContainerNetWeight = netWeight;
-                                        lastContainerFCLNetWeight = (((containerData.maxWeight / items.length) * netWeight) / 1000).toFixed(3);
-                                        // log.debug('totalNetWeightPerContainerxxx', totalNetWeightPerContainer);
-                                        // log.debug('lastContainerFCLNetWeight', lastContainerFCLNetWeight);
-                                        
-                                        if (noOfPallets < 1 && totalNetWeightPerContainer > 0) {
-                                            itemRecommendation = true;
-                                            
-                                            totalWeight = 0;
-                                            palletsPerContainer = (box.weight * 1000) / totalNetWeightPerPallet;
-                                            noOfPallets = palletsPerContainer;
-                                            palletsPerLayer = (containerData.width * containerData.length) / (box.width * box.length) || 1;
-                                            palletNetWeight = (box.netWeightPerPallet / 1000) * palletsPerContainer;
-                                            grossWeight = (box.grossWeightPerPallet / 1000) * palletsPerContainer;
-                                            netWeight = (box.netWeightPerPallet * palletsPerContainer) / 1000;
-                                            maxLayers = containerData.height / box.height;
-                                            noOfContainers = noOfPallets / palletsPerContainer || 1;
-                                            decimalGrossWeight = palletNetWeight + grossWeight;
-                                            weight = decimalGrossWeight - palletNetWeight;
-                                            reamsPerContainer = palletsPerContainer * (box.netWeightPerPallet / box.uomConversionRates.ream);
-                                            boxesPerContainer = (weight * 1000) / box.uomConversionRates.carton;
-                                        }
-                                        
-                                        if (palletsPerLayer > palletsPerContainer) {
-                                            palletsPerLayer = palletsPerContainer;
-                                        }
-                                        
-                                        var recommendedItems = {};
-                                        
-                                        // push summary
-                                        containerListCutsize.push({
-                                            parent: parent,
-                                            parentID: box.parentID,
-                                            parentName: box.parentName,
-                                            containerNo: containerIndex, // track which container
-                                            type: box.type,
-                                            product: box.product,
-                                            internalId: box.internalId,
-                                            displayName: box.displayName,
-                                            weight: box.weight,
-                                            maxWeightTon: containerData.maxWeight,
-                                            grossWeight: grossWeight,
-                                            netWeight: netWeight,
-                                            reamsPerContainer: reamsPerContainer,
-                                            noOfPallets: palletsPerContainer,
-                                            palletsPerContainer: palletsPerContainer,
-                                            palletsPerLayer: palletsPerLayer,
-                                            productLayer: box.layer,
-                                            boxesPerContainer: boxesPerContainer,
-                                            recommendedItems: recommendedItems,
-                                            sortedRecommendedItems: sortedRecommendedItems,
-                                            totalNetWeightPerPallet: totalNetWeightPerPallet
-                                        });
-                                        
-                                        // push pallets
-                                 //       log.debug('palletspercontainer push 3', palletsPerContainer);
-                                        grandNetWeightNewContainer = (box.netWeightPerPallet / 1000) * palletsPerContainer;
-                                        for (var i = 0; i < palletsPerContainer; i++) {
-                                            boxesCutsize3D.push({
-                                                parent: parent,
-                                                parentID: box.parentID,
-                                                parentName: box.parentName,
-                                                containerNo: containerIndex,
-                                                documentNo: box.documentNo,
-                                                type: box.type,
-                                                product: box.product,
-                                                internalId: box.internalId,
-                                                displayName: box.displayName,
-                                                pallet: "true",
-                                                layer: box.layer,
-                                                length: box.length,
-                                                width: box.width,
-                                                height: box.height,
-                                                weight: box.weight,
-                                                maxWeightTon: containerData.maxWeight,
-                                                netWeightPerPallet: box.netWeightPerPallet,
-                                                grossWeightPerPallet: box.grossWeightPerPallet,
-                                                reamsPerContainer: reamsPerContainer,
-                                                grossWeight: grossWeight,
-                                                netWeight: netWeight,
-                                                palletsPerContainer: palletsPerContainer,
-                                                palletsPerLayer: palletsPerLayer,
-                                                maxLayers: maxLayers,
-                                                noOfPallets: palletsPerContainer,
-                                                noOfContainers: noOfContainers,
-                                                boxesPerContainer: boxesPerContainer,
-                                                recommendedItems: recommendedItems,
-                                                sortedRecommendedItems: sortedRecommendedItems
-                                            });
-                                        }
-                                        
-                                    } else {
-                                        
-                                        allRecordCutsize.push({
-                                            boxesCutsize3D: boxesCutsize3D,
-                                            containerListCutsize: containerListCutsize
-                                        });
-                                        
-                                        palletsPerContainer = box.weight; // all remaining weight
-                                        containerIndex++;
-                                        
-                                        var noOfPallets = palletsPerContainer;
-                                        var palletsPerLayer = Math.floor((containerData.width * containerData.length) / (box.width * box.length)) || 1;
-                                        var palletNetWeight = (box.netWeightPerPallet / 1000) * palletsPerContainer;
-                                        var grossWeight = (box.grossWeightPerPallet / 1000) * palletsPerContainer;
-                                        var netWeight = (box.netWeightPerPallet * palletsPerContainer) / 1000;
-                                        var maxLayers = Math.floor(containerData.height / box.height);
-                                        var noOfContainers = noOfPallets / palletsPerContainer || 1;
-                                        var decimalGrossWeight = palletNetWeight + grossWeight;
-                                        var weight = Math.floor(decimalGrossWeight - palletNetWeight);
-                                        var reamsPerContainer = Math.floor(palletsPerContainer * (box.netWeightPerPallet / box.uomConversionRates.ream));
-                                        var boxesPerContainer = Math.floor((weight * 1000) / box.uomConversionRates.carton);
-                                        
-                                        
-                                        totalNetWeightPerContainer += netWeight;
-                                        lastContainerNetWeight = netWeight;
-                                        
-                                        if (noOfPallets < 1 && totalNetWeightPerContainer > 0) {
-                                            itemRecommendation = true;
-                                            
-                                            palletsPerContainer = (box.weight * 1000) / totalNetWeightPerPallet;
-                                            noOfPallets = palletsPerContainer;
-                                            palletsPerLayer = (containerData.width * containerData.length) / (box.width * box.length) || 1;
-                                            palletNetWeight = (box.netWeightPerPallet / 1000) * palletsPerContainer;
-                                            grossWeight = (box.grossWeightPerPallet / 1000) * palletsPerContainer;
-                                            netWeight = (box.netWeightPerPallet * palletsPerContainer) / 1000;
-                                            maxLayers = containerData.height / box.height;
-                                            noOfContainers = noOfPallets / palletsPerContainer || 1;
-                                            decimalGrossWeight = palletNetWeight + grossWeight;
-                                            weight = decimalGrossWeight - palletNetWeight;
-                                            reamsPerContainer = palletsPerContainer * (box.netWeightPerPallet / box.uomConversionRates.ream);
-                                            boxesPerContainer = (weight * 1000) / box.uomConversionRates.carton;
-                                        }
-                                        
-                                        if (palletsPerLayer > palletsPerContainer) {
-                                            palletsPerLayer = palletsPerContainer;
-                                        }
-                                        
-                                        var recommendedItems = {};
-                                        
-                                        // push summary
-                                        containerListCutsize.push({
-                                            parent: parent,
-                                            parentID: box.parentID,
-                                            parentName: box.parentName,
-                                            containerNo: containerIndex, // track which container
-                                            type: box.type,
-                                            product: box.product,
-                                            internalId: box.internalId,
-                                            displayName: box.displayName,
-                                            weight: box.weight,
-                                            maxWeightTon: containerData.maxWeight,
-                                            grossWeight: grossWeight,
-                                            netWeight: netWeight,
-                                            reamsPerContainer: reamsPerContainer,
-                                            noOfPallets: palletsPerContainer,
-                                            palletsPerContainer: palletsPerContainer,
-                                            palletsPerLayer: palletsPerLayer,
-                                            productLayer: box.layer,
-                                            boxesPerContainer: boxesPerContainer,
-                                            recommendedItems: recommendedItems,
-                                            sortedRecommendedItems: sortedRecommendedItems,
-                                            totalNetWeightPerPallet: totalNetWeightPerPallet
-                                        });
-                                        
-                                        // push pallets
-                                        for (var i = 0; i < palletsPerContainer; i++) {
-                                            boxesCutsize3D.push({
-                                                parent: parent,
-                                                parentID: box.parentID,
-                                                parentName: box.parentName,
-                                                containerNo: containerIndex,
-                                                documentNo: box.documentNo,
-                                                type: box.type,
-                                                product: box.product,
-                                                internalId: box.internalId,
-                                                displayName: box.displayName,
-                                                pallet: "true",
-                                                layer: box.layer,
-                                                length: box.length,
-                                                width: box.width,
-                                                height: box.height,
-                                                weight: box.weight,
-                                                maxWeightTon: containerData.maxWeight,
-                                                netWeightPerPallet: box.netWeightPerPallet,
-                                                grossWeightPerPallet: box.grossWeightPerPallet,
-                                                reamsPerContainer: reamsPerContainer,
-                                                grossWeight: grossWeight,
-                                                netWeight: netWeight,
-                                                palletsPerContainer: palletsPerContainer,
-                                                palletsPerLayer: palletsPerLayer,
-                                                maxLayers: maxLayers,
-                                                noOfPallets: palletsPerContainer,
-                                                noOfContainers: noOfContainers,
-                                                boxesPerContainer: boxesPerContainer,
-                                                recommendedItems: recommendedItems,
-                                                sortedRecommendedItems: sortedRecommendedItems
-                                            });
-                                        }
-                                    }
-                                }
-                                
-                                var tol = parseFloat(box.tolerance.replace('%', ''));
-                                lowerBound = 100 - tol;
-                                upperBound = 100 + tol;
-                                
-                                grandNetWeightPallet += (box.netWeightPerPallet / 1000) * totalPallets;
-                                
-                            }
-                        });
-                        
-                     //   log.debug('containerindex', containerIndex);
-                        if (containerData.maxWeight !== Infinity) {
-                            FCLNetWeight = ((((containerData.maxWeight / items.length) * containerIndex) * totalNetWeightPerPallet) / 1000).toFixed(3);
-                        } else {
-                            FCLNetWeight = ((((InputQty / items.length) * containerIndex) * totalNetWeightPerPallet) / 1000).toFixed(3);
-                        }
-                        
-                        var minTolerance = FCLNetWeight * (lowerBound / 100);
-                        var maxTolerance = FCLNetWeight * (upperBound / 100);
-                        
-                        // log.debug('items.length', items.length);
-                        // log.debug('min tolerance', minTolerance);
-                        // log.debug('max tolerance', maxTolerance);
-                        // log.debug('InputQty', InputQty);
-                        // log.debug('FCLNetWeight', FCLNetWeight);
-                        // log.debug('lastcontainernetweight', lastContainerNetWeight);
-                        // log.debug('grandNetWeightPallet', grandNetWeightPallet);
-                        if (InputQty >= minTolerance && InputQty <= maxTolerance && containerData.maxWeight !== Infinity) {
-                            
-                            itemRecommendation = true;
-                            
-                            if (InputQty < FCLNetWeight) {
-                                
-                               // log.debug('within range & need to add more');
-                                action = 'increase';
-                                totalBalanceWeight = (FCLNetWeight - InputQty).toFixed(3);
-                                
-                            } else {
-                                
-                               // log.debug('within range & need to reduce qty');
-                                action = 'reduce';
-                                totalBalanceWeight = (InputQty - FCLNetWeight).toFixed(3);
-                            }
-                            
-                        } else if (InputQty < minTolerance) {
-                            
-                        //    log.debug('add more');
-                            action = 'increase';
-                            
-                            itemRecommendation = true;
-                            totalBalanceWeight = (FCLNetWeight - InputQty).toFixed(3);
-                            
-                        } else if (InputQty >= maxTolerance) {
-                            
-                            itemRecommendation = true;
-                            
-                            if (lastContainerNetWeight) {
-                                
-                             //   log.debug('new container & add more if not yet FCL');
-                                action = 'increase';
-                                totalBalanceWeight = (FCLNetWeight - lastContainerNetWeight).toFixed(3);
-                                
-                            } else {
-                                
-                           //     log.debug('reduce qty');
-                                action = 'reduce';
-                                if (grandNetWeightPallet) {
-                                    totalBalanceWeight = (InputQty - grandNetWeightPallet).toFixed(3);
-                                }
-                            }
-                        }
-                        
-                     //  log.debug('totalBalanceWeight', totalBalanceWeight);
-                        
-                        if (boxesCutsize3D.length > 0) {
-                            allRecordCutsize.push(
-                                {
-                                    boxesCutsize3D: boxesCutsize3D,
-                                    containerListCutsize: containerListCutsize
-                                });
-                        }
-                        
-                    });
-                }
-                
-                var remainingBoxes = null;
-                var colorMap = {};
-                var totPalletsPerLayer = 0;
-                var currentProductCount = 0;
-                
-             //   log.debug('boxesCutsize3D.length', boxesCutsize3D.length);
-                boxesCutsize3D.forEach(function (box, boxIndex) {
-                    
-                    if (box.type == 'cutsize') {
-                        
-                        // 3D Start
-                        // var currentLayerColor = colors[layerCountCutsize % colors.length];
-                        
-                        // Assign a unique color per item
-                        if (!colorMap[box.product]) {
-                            colorMap[box.product] = colors[Object.keys(colorMap).length % colors.length];
-                        }
-                        var currentItemColor = colorMap[box.product]; // Get the color for the current item
-                        
-                        var rotations = generateLogicalRotations(box);
-                        var bestFitRotation = null;
-                        
-                        // Set the initial benchmark using the first box rotation
-                        var firstRotation = rotations[0];
-                        var initialRemainingDimensions = {
-                            remainingLength: containerData.length - z,
-                            remainingWidth: containerData.width - x,
-                            remainingHeight: containerData.height - y
-                        };
-                        
-                        
-                        // Initialize the best fit with the first rotation
-                        if (canFit(initialRemainingDimensions, firstRotation)) {
-                            bestFitRotation = firstRotation; // Set the first rotation as the initial best fit
-                        }
-                        
-                        // Define current position for each box before checking its fit
-                        var currentPosition = {
-                            remainingLength: containerData.length - z,
-                            remainingWidth: containerData.width - totalWidth,
-                            remainingHeight: containerData.height - y
-                        };
-                        
-                        // Variables to hold the best fits
-                        var bestFitWithShorterWidth = null;
-                        var bestFitWithLongerWidth = null;
-                        
-                        // Check each box rotation for fit
-                        rotations.forEach(function (rotatedBox) {
-                            // Check if the current rotation can fit
-                            if (canFit(currentPosition, rotatedBox)) {
-                                
-                                remainingBoxes = boxesCutsize3D.slice(boxIndex + 1);
-                                var isLastBox = remainingBoxes.length === 0;
-                                
-                                // Prioritize boxes with LONGER WIDTH than LENGTH
-                                if (rotatedBox.width > rotatedBox.length && totalWidth + rotatedBox.width <= containerData.width) {
-                                    if (!bestFitWithLongerWidth || rotatedBox.weight < bestFitWithLongerWidth.weight) {
-                                        bestFitWithLongerWidth = rotatedBox;
-                                    }
-                                }
-                                // Otherwise, consider using a shorter width for the last box scenario
-                                else if (totalWidth + rotatedBox.length <= containerData.width) {
-                                    if (!bestFitWithShorterWidth || rotatedBox.weight < bestFitWithShorterWidth.weight) {
-                                        bestFitWithShorterWidth = rotatedBox;
-                                    }
-                                }
-                            }
-                        });
-                        
-                        // Add the best fit to boxes that fit on x-axis
-                        if (bestFitWithLongerWidth) {
-                            boxesThatFitOnX.push(bestFitWithLongerWidth);
-                            totalWidth += bestFitWithLongerWidth.length;
-                        } else if (bestFitWithShorterWidth) {
-                            // Add longer width box if no shorter width box fits
-                            boxesThatFitOnX.push(bestFitWithShorterWidth);
-                            totalWidth += bestFitWithShorterWidth.width;
-                        }
-                        
-                        if (boxesThatFitOnX.length > 0) {
-                            bestFitRotation = boxesThatFitOnX[0];
-                        }
-                        
-                        // Distribute boxes along the x-axis row by alternating placement between front and back sides
-                        boxesThatFitOnX.forEach(function (fittedBox, index) {
-                            // Determine if we are on an even or odd row (rowNumber tracks rows)
-                            var isEvenRow = rowNumber % 2 === 0; // Even rows start from front (left), odd rows from back (right)
-                            
-                            // Alternate between front and back placement
-                            var placeOnFront = (isEvenRow && placeOnLeft) || (!isEvenRow && !placeOnLeft);
-                            var sideToPlace = placeOnFront ? 'left' : 'right';
-                            
-                            // Update weight distribution based on side
-                            if (sideToPlace === 'left') {
-                                leftSideWeight += fittedBox.weight;
-                            } else {
-                                rightSideWeight += fittedBox.weight;
-                            }
-                        });
-                        
-                        totalWidth = 0;
-                        rowNumber++;
-                        placeOnLeft = !placeOnLeft;
-                        boxesThatFitOnX = [];
-                        var heightMap = {};
-                        
-                        // After finding the best fit, check if it can be placed
-                        if (bestFitRotation) {
-                            
-                            var positionKey = x + "," + z;
-                            if (!occupiedHeights[positionKey]) {
-                                occupiedHeights[positionKey] = 0;
-                            }
-                            
-                            var occupiedHeightAtPosition = occupiedHeights[positionKey];
-                            
-                            if (occupiedHeightAtPosition + bestFitRotation.height <= containerData.height) {
-                                palletsPerLayerCutsize++;
-                                
-                                if (!heightMap[positionKey]) {
-                                    heightMap[positionKey] = occupiedHeightAtPosition + bestFitRotation.height;
-                                } else {
-                                    heightMap[positionKey] = Math.max(heightMap[positionKey], occupiedHeightAtPosition + bestFitRotation.height);
-                                }
-                                
-                                var minOccupiedHeight = Math.min.apply(null, Object.values(heightMap)) || 0;
-                                var remainingHeight = containerData.height - minOccupiedHeight;
-                                
-                                totPalletsPerLayer++;
-                                
-                                packedBoxesCutsize.push({
-                                    x: x,
-                                    y: occupiedHeightAtPosition,
-                                    z: z,
-                                    originalDimensions: box,
-                                    box: bestFitRotation,
-                                    color: currentItemColor,
-                                    remainingDimensions: {
-                                        remainingLength: containerData.length - z,
-                                        remainingWidth: containerData.width - x,
-                                        remainingHeight: remainingHeight
-                                    },
-                                    type: box.type,
-                                    product: box.product,
-                                    internalId: box.internalId,
-                                    weight: box.weight,
-                                    maxWeightTon: box.maxWeightTon,
-                                    layer: box.layer,
-                                    palletNetWeight: box.palletNetWeight,
-                                    netWeight: box.netWeight,
-                                    grossWeight: box.grossWeight,
-                                    noOfPallets: box.noOfPallets,
-                                    palletsPerContainer: box.palletsPerContainer,
-                                    palletsPerLayer: box.palletsPerLayer,
-                                    productLayer: box.layer,
-                                    parent: box.parent,
-                                    displayName: box.displayName,
-                                    reamsPerContainer: box.reamsPerContainer,
-                                    boxesPerContainer: box.boxesPerContainer,
-                                    minOccupiedHeight: minOccupiedHeight,
-                                    recommendedItems: box.recommendedItems,
-                                    sortedRecommendedItems: box.sortedRecommendedItems
-                                });
-                                
-                                grandTotalCutsize += bestFitRotation.price;
-                                x += bestFitRotation.width;
-                                
-                                if (x + bestFitRotation.width > containerData.width) {
-                                    x = 0;
-                                    z += bestFitRotation.length;
-                                }
-                                
-                                var layers = parseInt(bestFitRotation.layer.slice(0, -1));
-                                
-                                if (z + bestFitRotation.length > containerData.length) {
-                                    if (layerCountCutsize + 1 < layers) {
-                                        z = 0;
-                                        y += bestFitRotation.height;
-                                        
-                                        totPalletsPerLayer = 0;
-                                        palletsPerLayerCutsize = 0;
-                                        layerCountCutsize++;
-                                    }
-                                }
-                                
-                                
-                                occupiedHeights[positionKey] = Math.max(occupiedHeightAtPosition, occupiedHeightAtPosition + bestFitRotation.height);
-                                balanceLength = containerData.length - z;
-                                balanceWidth = containerData.width - x;
-                                balanceHeight = containerData.height - occupiedHeights[positionKey];
-                            }
-                            
-                        } else {
-                       //     log.debug('No valid box to fit:', box);
-                            currentBox = box;
-                            currentProductCount = currentProductCount;
-                            
-                            allContainersCutsize.push({
-                                packedBoxes: packedBoxesCutsize,
-                                containerListCutsize: containerListCutsize
-                            });
-                            
-                            x = 0;
-                            y = 0;
-                            z = 0;
-                            packedBoxesCutsize = [];
-                            occupiedHeights = {};
-                            heightMap = {};
-                            layerCountCutsize = 0;
-                            palletsPerLayerCutsize = 0;
-                            
-                            totPalletsPerLayer = 1;
-                            
-                            if (box.width < box.length) {
-                                var temp = box.width;
-                                box.width = box.length;
-                                box.length = temp;
-                            }
-                            
-                            if (canFit({
-                                remainingLength: containerData.length,
-                                remainingWidth: containerData.width,
-                                remainingHeight: containerData.height
-                            }, box)) {
-                                packedBoxesCutsize.push({
-                                    x: x,
-                                    y: y,
-                                    z: z,
-                                    originalDimensions: box,
-                                    box: box,
-                                    color: currentItemColor,
-                                    remainingDimensions: {
-                                        remainingLength: containerData.length - box.length,
-                                        remainingWidth: containerData.width - box.width,
-                                        remainingHeight: containerData.height - box.height
-                                    },
-                                    type: box.type,
-                                    product: box.product,
-                                    internalId: box.internalId,
-                                    weight: box.weight,
-                                    layer: layerCountCutsize,
-                                    netWeight: box.netWeight,
-                                    grossWeight: box.grossWeight,
-                                    noOfPallets: 1,
-                                    palletsPerLayer: 1,
-                                    productLayer: box.layer,
-                                    parent: box.parent,
-                                    displayName: box.displayName,
-                                    reamsPerContainer: box.reamsPerContainer,
-                                    boxesPerContainer: box.boxesPerContainer,
-                                    recommendedItems: box.recommendedItems,
-                                    sortedRecommendedItems: box.sortedRecommendedItems
-                                });
-                                
-                                x = box.width;
-                           //     log.debug('Placed current box in new container:', box);
-                            } else {
-                                log.debug('Current box still cannot fit in the new container:', box);
-                            }
-                        }
-                    }
-                    
-                });
-                
-                if (packedBoxesCutsize.length > 0) {
-                    allContainersCutsize.push(
-                        {
-                            packedBoxes: packedBoxesCutsize,
-                            containerListCutsize: containerListCutsize
-                        });
-                }
-                
-             
-                
+            // Get the first product group to extract items
+            const productGroups = Object.keys(boxesCutsize);
+            if (productGroups.length === 0) {
+                return { error: "No products found in boxesCutsize" };
             }
             
+            // Extract data from first product group with new format
+            const firstProductKey = productGroups[0];
+            const firstProduct = boxesCutsize[firstProductKey];
             
-            // to generate 2 best options for item recommendation
-            if (itemRecommendation === true || parsedBody.selectedStatus === "adjustedQty") {
-              
+            if (!firstProduct || !firstProduct.variants || firstProduct.variants.length === 0) {
+                return { error: "No variants found in the product group" };
+            }
+            
+            // Get target weight from the product group (in tons)
+            const targetWeightTons = firstProduct.weight || 0;
+            const targetWeightKg = targetWeightTons * 1000; // Convert to kg
+            
+            // Use container data from top level
+            if (!containerData) {
+                return { error: "Container data not found in input" };
+            }
+            
+            // Get all variants from the product group with unique keys and group by pallet type
+            const variantsByPalletType = {};
+            const allVariants = {};
+            
+            firstProduct.variants.forEach(item => {
+                // Use internalId as unique key instead of layer
+                const uniqueKey = item.internalId;
+                allVariants[uniqueKey] = {
+                    internalId: item.internalId,
+                    product: item.product,
+                    displayName: item.displayName,
+                    type: item.type,
+                    layer: item.layer,
+                    palletType: item.palletType,
+                    length: item.length,
+                    width: item.width,
+                    height: item.height,
+                    netWeight: item.netWeightPerPallet,
+                    grossWeight: item.grossWeightPerPallet,
+                    uomConversionRates: item.uomConversionRates,
+                    parentID: item.parentID,
+                    parentName: item.parentName
+                };
                 
-                var allBoxes = [];
-                var boxes = boxes || {};
-                var bin = bin || {};
-                var qtyToAdd = 0;
-                
-                function mergeObjects(target, source) {
-                    Object.keys(source).forEach(function (key) {
-                        if (!target[key]) {
-                            target[key] = [];
-                        }
-                        target[key] = target[key].concat(source[key]);
-                    });
+                // Group by pallet type (constraint: 1 container = 1 pallet type)
+                if (!variantsByPalletType[item.palletType]) {
+                    variantsByPalletType[item.palletType] = {};
                 }
+                variantsByPalletType[item.palletType][uniqueKey] = allVariants[uniqueKey];
+            });
+            
+            log.debug('variantsByPalletType', variantsByPalletType);
+            
+            // Find best solution across all pallet types
+            let bestSolution = null;
+            let bestPalletType = null;
+            let bestVariants = null;
+            
+            Object.keys(variantsByPalletType).forEach(palletType => {
+                const variants = variantsByPalletType[palletType];
                 
-                if (hasCutsize) {
-                    mergeObjects(boxes, boxesCutsize);
-                    mergeObjects(bin, containerData);
-                }
-                // Normalize and flatten all box items
-                Object.keys(boxes).forEach(function (parent) {
-                    var items = boxes[parent];
-                    var heaviestBox = null;
-                    
-                    items.forEach(function (box) {
-                        
-                        if (!heaviestBox || box.netWeightPerPallet > heaviestBox.netWeightPerPallet) {
-                            heaviestBox = box;
-                            
-                            qtyToAdd = totalBalanceWeight;  //totalbalanceweight is the balance of input qty needed to be added/ reduced to make it FCL
-                            var palletsAfterAddQty = Math.floor(((qtyToAdd + InputQty) * 1000) / totalNetWeightPerPallet);
-                            // log.debug('palletsAfterAddQty', palletsAfterAddQty);
-                            // log.debug('qtyToAdd', qtyToAdd);
-                            while (palletsAfterAddQty > 0 && palletsAfterAddQty > box.containerData.maxWeight) {
-                                qtyToAdd -= 0.1; // reduce 1 unit
-                                palletsAfterAddQty = Math.floor(((qtyToAdd + InputQty) * 1000) / totalNetWeightPerPallet);
-                            }
-                            
-                        }
-                        
-                        if (box.baseUnitAbbreviation) {
-                            var baseUnit = box.baseUnitAbbreviation.toLowerCase();
-                            box.weight = (box.weight * box.uomConversionRates[baseUnit]) / box.uomConversionRates.ton;
-                            box.maxWeightTon = box.weight;
-                        }
-                        
-                        if (parsedBody.selectedStatus === "adjustedQty") {
-                            for (var s = 0; s < parsedBody.selectedOption.length; s++) {
-                                var selectedProductId = parsedBody.selectedOption[s].custpage_product.id;
-                                var adjustedQty = parsedBody.selectedOption[s].suggestedQty;
-                                var parentID = parsedBody.selectedOption[s].parentID;
-                                
-                                if (box.internalId === selectedProductId) {
-                                    allBoxes.push({
-                                        parentID: parentID,
-                                        box: box,
-                                        quantity: adjustedQty
-                                    });
-                                }
-                            }
-                        } else {
-                            allBoxes.push({box: heaviestBox, qtyToAdd: qtyToAdd});
-                        }
-                    });
+                // Calculate max capacity for each variant in this pallet type
+                const variantCapacities = {};
+                Object.keys(variants).forEach(variantKey => {
+                    const capacity = this.calculateMaxPalletsPerContainer(containerData, variants[variantKey]);
+                    variantCapacities[variantKey] = capacity;
                 });
                 
-         
+                // Calculate mixed loading capacity within same pallet type
+                const mixedCapacity = this.calculateMixedLoading(containerData, variants);
                 
-                // Get top 2 recommendations where each option can have multiple items
-                var recommendedOptions = recommendTop2Boxes(
-                    allBoxes,
-                    totalBalanceWeight
-                );
+                // Try single container first (including mixed loading)
+                const singleContainerResults = this.trySingleContainer(targetWeightKg, variants, variantCapacities, mixedCapacity);
                 
-                log.debug('recommendedoptikons', recommendedOptions);
-                if (recommendedOptions && recommendedOptions.length > 0) {
-                    recommendedBestFitItems = {
-                        option1: recommendedOptions.map(function (opt) {
-                            return {
-                                type: opt.type || "",
-                                action: opt.action || "",
-                                internalId: opt.internalId || "",
-                                parentID: opt.parentID || "",
-                                displayName: opt.displayName || "",
-                                suggestedQty: opt.suggestedQty || 0,
-                                uom: opt.uom || ""
-                            };
-                        })
+                if (singleContainerResults.feasible) {
+                    if (!bestSolution || singleContainerResults.solution.excess < bestSolution.excess) {
+                        bestSolution = singleContainerResults;
+                        bestPalletType = palletType;
+                        bestVariants = variants;
+                    }
+                }
+                
+                // Try dual container strategy within same pallet type
+                const dualContainerResults = this.tryDualContainer(targetWeightKg, variants, variantCapacities, mixedCapacity);
+                
+                if (dualContainerResults.feasible) {
+                    if (!bestSolution || dualContainerResults.solution.excess < bestSolution.excess) {
+                        bestSolution = dualContainerResults;
+                        bestPalletType = palletType;
+                        bestVariants = variants;
+                    }
+                }
+            });
+            
+            log.debug('bestSolution', bestSolution);
+            log.debug('bestPalletType', bestPalletType);
+            
+            if (bestSolution) {
+                if (bestSolution.solution.type.startsWith('dual')) {
+                    return this.generateDualContainerOutput(bestSolution, containerData, bestVariants, action, tolerance);
+                } else {
+                    return this.generateSingleContainerOutput(bestSolution, containerData, bestVariants, action, tolerance);
+                }
+            }
+            
+            // Return error if no solution found across all pallet types
+            return {
+                error: "No feasible solution found for any pallet type",
+                suggestions: this.generateAlternativeSuggestions(targetWeightKg, allVariants, {}, containerData),
+                palletTypeAnalysis: Object.keys(variantsByPalletType).map(palletType => ({
+                    palletType: palletType,
+                    variantCount: Object.keys(variantsByPalletType[palletType]).length,
+                    variants: Object.keys(variantsByPalletType[palletType]).map(key => ({
+                        internalId: variantsByPalletType[palletType][key].internalId,
+                        layer: variantsByPalletType[palletType][key].layer,
+                        displayName: variantsByPalletType[palletType][key].displayName
+                    }))
+                }))
+            };
+        }
+        
+        /**
+         * Parse tolerance percentage string to decimal
+         */
+        parseTolerancePercent(toleranceStr) {
+            if (!toleranceStr) return 0.1; // Default 10%
+            
+            // Remove % sign and convert to decimal
+            const numStr = toleranceStr.toString().replace('%', '');
+            const percent = parseFloat(numStr);
+            
+            return isNaN(percent) ? 0.1 : percent / 100;
+        }
+        
+        /**
+         * Calculate maximum pallets per container for a single variant
+         */
+        calculateMaxPalletsPerContainer(containerData, variant) {
+            if (!containerData) return null;
+            
+            // Try both orientations: length x width and width x length
+            const orientations = [
+                { l: variant.length, w: variant.width },
+                { l: variant.width, w: variant.length }
+            ];
+            
+            let maxPallets = 0;
+            let bestConfig = null;
+            
+            orientations.forEach(orientation => {
+                const palletsPerRowLength = Math.floor(containerData.length / orientation.l);
+                const palletsPerRowWidth = Math.floor(containerData.width / orientation.w);
+                const palletsPerLayer = palletsPerRowLength * palletsPerRowWidth;
+                const maxLayers = Math.floor(containerData.height / variant.height);
+                const totalPallets = palletsPerLayer * maxLayers;
+                
+                // Check weight constraint
+                const totalGrossWeight = totalPallets * variant.grossWeight / 1000; // tons
+                
+                if (totalGrossWeight <= containerData.maxWeight && totalPallets > maxPallets) {
+                    maxPallets = totalPallets;
+                    bestConfig = {
+                        palletsPerLayer: palletsPerLayer,
+                        maxLayers: maxLayers,
+                        orientation: `${orientation.l}x${orientation.w}`
                     };
                 }
-                
-                // Log or return the structured recommendation
-                log.debug("Recommendation Result", recommendedBestFitItems);
-                
-            }
-        }
-        
-        // Recommendation function
-        function recommendTop2Boxes(boxes, totalBalanceWeight) {
-            var allValidFits = [];
-            var fitOptions = [];
-            
-            for (var i = 0; i < boxes.length; i++) {
-                var box = boxes[i].box;
-                var qtyToAdd = boxes[i].qtyToAdd;
-                
-                if (parsedBody.selectedStatus === "adjustedQty") {
-                    var qtyToAdd = boxes[i].quantity;
-                    if (qtyToAdd <= totalBalanceWeight) {
-                        var palletsPerContainer = qtyToAdd;
-                    } else {
-                        var palletsPerContainer = 0;
-                    }
-                    
-                } else {
-                    
-                    var palletsPerContainer = totalBalanceWeight;
-                }
-                
-                if (palletsPerContainer > 0) {
-                    
-                    allValidFits.push({
-                        box: box,
-                        palletsPerContainer: qtyToAdd,
-                        totalWeight: palletsPerContainer
-                    });
-                    
-                }
-                
-            }
-            
-            // Group valid fits by unique box ID
-            var uniqueFitsMap = {};
-            for (var i = 0; i < allValidFits.length; i++) {
-                var fit = allValidFits[i];
-                var id = fit.box.internalId;
-                
-                // Only take one fit per unique item ID
-                if (!uniqueFitsMap[id]) {
-                    uniqueFitsMap[id] = fit;
-                }
-            }
-            
-            // Convert to array and only push if we have at least 2 different items applied only if it isn't adjustedqty
-            var uniqueFits = Object.values(uniqueFitsMap);
-            
-            if (parsedBody.selectedStatus === "adjustedQty") {
-                // Just push whatever available (even 1 or none)
-                for (var i = 0; i < uniqueFits.length; i++) {
-                    fitOptions.push(uniqueFits[i]);
-                }
-            } else {
-                // Collect fit options
-                if (uniqueFits.length > 0) {
-                    fitOptions.push(uniqueFits[0]);
-                    if (uniqueFits.length >= 2) {
-                        fitOptions.push(uniqueFits[1]);
-                    }
-                }
-            }
-            
-            // Sort the options by total weight descending
-            fitOptions.sort(function (a, b) {
-                return b.totalWeight - a.totalWeight;
             });
-            
-            // Always return up to 2 recommendations
-            var recommended = [];
-            var type = null;
-            for (var k = 0; k < Math.min(2, fitOptions.length); k++) {
-                
-                if (fitOptions[k].type !== 'mixed') {
-                    type = 'dedicated';
-                } else {
-                    type = 'mixed';
-                }
-                
-                recommended.push({
-                    type: type,
-                    action: action,
-                    internalId: fitOptions[k].box.internalId,
-                    parentID: fitOptions[k].box.parentID,
-                    displayName: fitOptions[k].box.parentName,
-                    suggestedQty: fitOptions[k].palletsPerContainer,
-                    uom: fitOptions[k].baseUnitAbbreviation
-                });
-            }
-            
-            return recommended;
-            
-        }
-        
-        
-        // Ensure boxes are sorted by weight and volume before running the bin packing algorithm
-        var sortedBoxesCutsize = sortByWeightAndVolume(boxesCutsize);
-        
-        // Cutsize, Folio, Mixed Calculation
-        greedyBinPacking(sortedBoxesCutsize, containerData);
-        
-        
-        var recommendedItems = 0;
-        var sortedRecommendedItems = 0;
-        var layerCountForContainer = 0;
-        
-        var totalReamsCutsize = 0;
-        var totalBoxesCutsize = 0;
-        var totalPalletsCutsize = 0;
-        
-        var cutsizeResult3D = allContainersCutsize.map(function (containerWrapper, containerIndex) {
-            var container = containerWrapper.packedBoxes; // Access packedBoxes directly
-            
-            // Calculate layers and items per layer for this container
-            container.forEach(function (box, index) {
-                if (index > 0 && box.y > container[index - 1].y) {
-                    layerCountForContainer++;
-                }
-            });
-            
-            var uniqueParent = {};
-            var containerNetWeight = [];
-            var containerNetWeightKG = [];
-            var containerGrossWeight = [];
-            var containerGrossWeightKG = [];
-            var noOfPallets = [];
-            var palletsPerLayer = [];
-            var reams = [];
-            var boxes = [];
-            var minOccupiedHeight = 0;
-            var totalReamsPerContainer = 0;
-            var totalBoxesPerContainer = 0;
-            for (var i = 0; i < container.length; i++) {
-                
-                var netWeight = container[i].netWeight.toFixed(3);
-                var netWeightKG = container[i].netWeight.toFixed(3) * 1000;
-                var grossWeight = container[i].grossWeight.toFixed(3);
-                var grossWeightKG = container[i].grossWeight.toFixed(3) * 1000;
-                var pallets = container[i].palletsPerContainer;
-                var product = container[i].product;
-                
-                if (!uniqueParent[product]) { // Check if weight is already added
-                    containerNetWeight.push(netWeight);
-                    containerNetWeightKG.push(netWeightKG);
-                    containerGrossWeight.push(grossWeight);
-                    containerGrossWeightKG.push(grossWeightKG);
-                    noOfPallets.push(pallets);
-                    palletsPerLayer.push(container[i].palletsPerLayer);
-                    reams.push(container[i].reamsPerContainer);
-                    boxes.push(container[i].boxesPerContainer);
-                    totalReamsPerContainer += container[i].reamsPerContainer;
-                    totalBoxesPerContainer += container[i].boxesPerContainer;
-                    totalPalletsCutsize += container[i].palletsPerContainer || 0;
-                    
-                    uniqueParent[product] = true; // Mark as added
-                }
-                recommendedItems = container[i].recommendedItems;
-                minOccupiedHeight = container[i].minOccupiedHeight;
-            }
-            
-            totalReamsCutsize = totalReamsPerContainer;
-            totalBoxesCutsize = totalBoxesPerContainer;
-            layerCountForContainer += 1;
             
             return {
-                containerIndex: containerIndex + 1,
-                type: 'Cutsize',
-                layersUsed: layerCountForContainer,
-                palletsPerLayer: palletsPerLayer,
-                palletsPerContainer: noOfPallets,
-                width: containerData.width,        // Bin width for Cutsize
-                height: containerData.height,      // Bin height for Cutsize
-                length: containerData.length,      // Bin length for Cutsize
-                containerNetWeight: containerNetWeight,
-                containerNetWeightKG: containerNetWeightKG,
-                containerGrossWeight: containerGrossWeight,
-                containerGrossWeightKG: containerGrossWeightKG,
-                reams: reams,
-                boxes: boxes,
-                totalReamsPerContainer: totalReamsCutsize,
-                totalBoxesPerContainer: totalBoxesCutsize,
-                
-                recommendedItems: recommendedItems && recommendedItems.length > 0
-                    ? recommendedItems.map(function (item) {
-                        return {
-                            layer: item.layer,
-                            maxQuantity: item.maxQuantity,
-                            width: item.width.toFixed(2),
-                            height: item.height.toFixed(2),
-                            length: item.length.toFixed(2),
-                        };
-                    })
-                    : null,
-                
-                item: container.map(function (packedBox) {
-                    return {
-                        product: packedBox.product,
-                        internalId: packedBox.internalId,
-                        displayName: packedBox.displayName,
-                        position: {
-                            x: packedBox.x,
-                            y: packedBox.y,
-                            z: packedBox.z
-                        },
-                        originalDimensions: {
-                            width: packedBox.originalDimensions.width,
-                            height: packedBox.originalDimensions.height,
-                            length: packedBox.originalDimensions.length,
-                            weight: packedBox.originalDimensions.weight
-                        },
-                        packedDimensions: {
-                            width: packedBox.box.width,
-                            height: packedBox.box.height,
-                            length: packedBox.box.length
-                        },
-                        remainingDimensions: {
-                            width: packedBox.remainingDimensions.remainingWidth.toFixed(2),
-                            height: packedBox.remainingDimensions.remainingHeight.toFixed(2),
-                            length: packedBox.remainingDimensions.remainingLength.toFixed(2)
-                        },
-                        color: packedBox.color,
-                        type: packedBox.type,
-                        productLayer: packedBox.box.layer,
-                        pallet: true,
-                    };
-                })
+                maxPallets: maxPallets,
+                config: bestConfig
             };
-        });
-        // ✅ Step 1: Collect all items across all containerWrappers
-        var allItems = [];
-        // log.debug('allrecordcutsize', allRecordCutsize);
-        // log.debug('allrecordcutsize.length', allRecordCutsize.length);
-        allRecordCutsize.forEach(function (containerWrapper) {
-            if (containerWrapper.containerListCutsize) {
-                allItems = allItems.concat(containerWrapper.containerListCutsize);
-            }
-        });
+        }
         
-        // ✅ Step 2: Group by containerNo (avoid duplicate containers)
-        var groupedByContainer = {};
-        allItems.forEach(function (packedBox) {
-            var containerNo = packedBox.containerNo;
+        /**
+         * Calculate mixed loading strategies
+         */
+        calculateMixedLoading(containerData, variants) {
+            if (!containerData || Object.keys(variants).length < 2) return null;
             
-            if (!groupedByContainer[containerNo]) {
-                groupedByContainer[containerNo] = [];
-            }
+            const variantKeys = Object.keys(variants);
+            const mixedStrategies = [];
             
-            // Prevent duplicate items inside same container
-            var alreadyExists = groupedByContainer[containerNo].some(function (item) {
-                return item.internalId === packedBox.internalId;
+            // Get optimal floor layout (same for all variants with same footprint)
+            const firstVariant = variants[variantKeys[0]];
+            const orientations = [
+                { l: firstVariant.length, w: firstVariant.width },
+                { l: firstVariant.width, w: firstVariant.length }
+            ];
+            
+            let bestFloorLayout = null;
+            let maxPalletsPerLayer = 0;
+            
+            orientations.forEach(orientation => {
+                const palletsPerRowLength = Math.floor(containerData.length / orientation.l);
+                const palletsPerRowWidth = Math.floor(containerData.width / orientation.w);
+                const palletsPerLayer = palletsPerRowLength * palletsPerRowWidth;
+                
+                if (palletsPerLayer > maxPalletsPerLayer) {
+                    maxPalletsPerLayer = palletsPerLayer;
+                    bestFloorLayout = {
+                        palletsPerLayer,
+                        orientation: `${orientation.l}x${orientation.w}`
+                    };
+                }
             });
             
-            if (!alreadyExists) {
-                groupedByContainer[containerNo].push(packedBox);
-            }
-        });
-        
-        // ✅ Step 3: Build final cutsizeResultConcal
-        var cutsizeResultConcal = Object.keys(groupedByContainer).map(function (containerNo) {
-            var itemsInContainer = groupedByContainer[containerNo];
-            var totalPalletsCopyPaper = 0;
-            var totalReamsCutsize = 0;
-            var totalBoxesCutsize = 0;
+            if (!bestFloorLayout) return null;
             
-            var formattedItems = itemsInContainer.map(function (packedBox) {
+            // Generate all possible layer combinations
+            const maxLayersPerVariant = {};
+            variantKeys.forEach(key => {
+                maxLayersPerVariant[key] = Math.floor(containerData.height / variants[key].height);
+            });
+            
+            // Test different combinations of layers
+            for (let i = 0; i < variantKeys.length; i++) {
+                for (let j = i; j < variantKeys.length; j++) {
+                    const variant1Key = variantKeys[i];
+                    const variant2Key = variantKeys[j];
+                    const variant1 = variants[variant1Key];
+                    const variant2 = variants[variant2Key];
+                    
+                    // Skip if same variant (handled by single variant logic)
+                    if (i === j) continue;
+                    
+                    // Try different layer distributions
+                    for (let layers1 = 1; layers1 <= maxLayersPerVariant[variant1Key]; layers1++) {
+                        for (let layers2 = 1; layers2 <= maxLayersPerVariant[variant2Key]; layers2++) {
+                            const totalHeight = (layers1 * variant1.height) + (layers2 * variant2.height);
+                            
+                            if (totalHeight <= containerData.height) {
+                                const totalPallets = (layers1 + layers2) * bestFloorLayout.palletsPerLayer;
+                                const totalNetWeight = (layers1 * bestFloorLayout.palletsPerLayer * variant1.netWeight) +
+                                    (layers2 * bestFloorLayout.palletsPerLayer * variant2.netWeight);
+                                const totalGrossWeight = (layers1 * bestFloorLayout.palletsPerLayer * variant1.grossWeight) +
+                                    (layers2 * bestFloorLayout.palletsPerLayer * variant2.grossWeight);
+                                
+                                if (totalGrossWeight / 1000 <= containerData.maxWeight) {
+                                    mixedStrategies.push({
+                                        type: 'mixed',
+                                        totalPallets,
+                                        totalNetWeight,
+                                        totalGrossWeight,
+                                        totalHeight,
+                                        layers: [
+                                            {
+                                                variant: variant1Key,
+                                                layerCount: layers1,
+                                                palletsPerLayer: bestFloorLayout.palletsPerLayer,
+                                                totalPallets: layers1 * bestFloorLayout.palletsPerLayer,
+                                                netWeight: layers1 * bestFloorLayout.palletsPerLayer * variant1.netWeight,
+                                                grossWeight: layers1 * bestFloorLayout.palletsPerLayer * variant1.grossWeight,
+                                                height: variant1.height
+                                            },
+                                            {
+                                                variant: variant2Key,
+                                                layerCount: layers2,
+                                                palletsPerLayer: bestFloorLayout.palletsPerLayer,
+                                                totalPallets: layers2 * bestFloorLayout.palletsPerLayer,
+                                                netWeight: layers2 * bestFloorLayout.palletsPerLayer * variant2.netWeight,
+                                                grossWeight: layers2 * bestFloorLayout.palletsPerLayer * variant2.grossWeight,
+                                                height: variant2.height
+                                            }
+                                        ],
+                                        floorLayout: bestFloorLayout
+                                    });
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Sort by total net weight (descending)
+            mixedStrategies.sort((a, b) => b.totalNetWeight - a.totalNetWeight);
+            
+            return mixedStrategies.length > 0 ? mixedStrategies[0] : null;
+        }
+        
+        /**
+         * Calculate required pallets for target weight
+         */
+        calculateRequiredPallets(targetWeightKg, variant) {
+            return Math.ceil(targetWeightKg / variant.netWeight);
+        }
+        
+        /**
+         * Try single container solutions including mixed loading
+         */
+        trySingleContainer(targetWeightKg, variants, variantCapacities, mixedCapacity) {
+            let bestSolution = null;
+            let minExcess = Infinity;
+            
+            // Test single variant solutions
+            Object.keys(variants).forEach(layer => {
+                const variant = variants[layer];
+                const capacity = variantCapacities[layer];
                 
-                totalPalletsCopyPaper += packedBox.palletsPerContainer;
-                totalReamsCutsize += packedBox.reamsPerContainer;
-                totalBoxesCutsize += packedBox.boxesPerContainer;
+                if (!capacity || capacity.maxPallets === 0) return;
+                
+                const requiredPallets = this.calculateRequiredPallets(targetWeightKg, variant);
+                
+                if (requiredPallets <= capacity.maxPallets) {
+                    const actualWeight = requiredPallets * variant.netWeight;
+                    const excess = actualWeight - targetWeightKg;
+                    
+                    if (excess < minExcess) {
+                        minExcess = excess;
+                        bestSolution = {
+                            type: 'single',
+                            variant: layer,
+                            pallets: requiredPallets,
+                            netWeight: actualWeight,
+                            grossWeight: requiredPallets * variant.grossWeight,
+                            excess: excess
+                        };
+                    }
+                }
+            });
+            
+            // Test mixed loading solution
+            if (mixedCapacity && mixedCapacity.totalNetWeight >= targetWeightKg) {
+                const excess = mixedCapacity.totalNetWeight - targetWeightKg;
+                
+                if (excess < minExcess) {
+                    minExcess = excess;
+                    bestSolution = {
+                        type: 'mixed',
+                        ...mixedCapacity,
+                        excess: excess
+                    };
+                }
+            }
+            
+            return {
+                feasible: bestSolution !== null,
+                solution: bestSolution
+            };
+        }
+        
+        /**
+         * Try dual container solutions
+         */
+        tryDualContainer(targetWeightKg, variants, variantCapacities, mixedCapacity) {
+            let bestSolution = null;
+            let minExcess = Infinity;
+            
+            // Strategy 1: Fill one container completely with single variant, then fill second with remaining
+            Object.keys(variants).forEach(firstLayer => {
+                const firstVariant = variants[firstLayer];
+                const firstCapacity = variantCapacities[firstLayer];
+                
+                if (!firstCapacity || firstCapacity.maxPallets === 0) return;
+                
+                // Fill first container completely
+                const firstContainerPallets = firstCapacity.maxPallets;
+                const firstContainerWeight = firstContainerPallets * firstVariant.netWeight;
+                const remainingWeight = targetWeightKg - firstContainerWeight;
+                
+                if (remainingWeight <= 0) return;
+                
+                // Try different variants for second container
+                Object.keys(variants).forEach(secondLayer => {
+                    const secondVariant = variants[secondLayer];
+                    const secondCapacity = variantCapacities[secondLayer];
+                    
+                    if (!secondCapacity || secondCapacity.maxPallets === 0) return;
+                    
+                    const requiredSecondPallets = Math.ceil(remainingWeight / secondVariant.netWeight);
+                    
+                    if (requiredSecondPallets <= secondCapacity.maxPallets) {
+                        const actualSecondWeight = requiredSecondPallets * secondVariant.netWeight;
+                        const totalWeight = firstContainerWeight + actualSecondWeight;
+                        const excess = totalWeight - targetWeightKg;
+                        
+                        if (excess >= 0 && excess < minExcess) {
+                            minExcess = excess;
+                            bestSolution = {
+                                type: 'dual-single',
+                                container1: {
+                                    type: 'single',
+                                    variant: firstLayer,
+                                    pallets: firstContainerPallets,
+                                    netWeight: firstContainerWeight,
+                                    grossWeight: firstContainerPallets * firstVariant.grossWeight,
+                                    status: "FULL"
+                                },
+                                container2: {
+                                    type: 'single',
+                                    variant: secondLayer,
+                                    pallets: requiredSecondPallets,
+                                    netWeight: actualSecondWeight,
+                                    grossWeight: requiredSecondPallets * secondVariant.grossWeight,
+                                    status: "PARTIAL"
+                                },
+                                totalWeight: totalWeight,
+                                excess: excess
+                            };
+                        }
+                    }
+                });
+            });
+            
+            // Strategy 2: Use mixed loading in first container if available
+            if (mixedCapacity) {
+                const remainingWeight = targetWeightKg - mixedCapacity.totalNetWeight;
+                
+                if (remainingWeight > 0) {
+                    // Try to fill remaining with second container
+                    Object.keys(variants).forEach(secondLayer => {
+                        const secondVariant = variants[secondLayer];
+                        const secondCapacity = variantCapacities[secondLayer];
+                        
+                        if (!secondCapacity || secondCapacity.maxPallets === 0) return;
+                        
+                        const requiredSecondPallets = Math.ceil(remainingWeight / secondVariant.netWeight);
+                        
+                        if (requiredSecondPallets <= secondCapacity.maxPallets) {
+                            const actualSecondWeight = requiredSecondPallets * secondVariant.netWeight;
+                            const totalWeight = mixedCapacity.totalNetWeight + actualSecondWeight;
+                            const excess = totalWeight - targetWeightKg;
+                            
+                            if (excess >= 0 && excess < minExcess) {
+                                minExcess = excess;
+                                bestSolution = {
+                                    type: 'dual-mixed',
+                                    container1: {
+                                        type: 'mixed',
+                                        ...mixedCapacity,
+                                        status: "FULL"
+                                    },
+                                    container2: {
+                                        type: 'single',
+                                        variant: secondLayer,
+                                        pallets: requiredSecondPallets,
+                                        netWeight: actualSecondWeight,
+                                        grossWeight: requiredSecondPallets * secondVariant.grossWeight,
+                                        status: "PARTIAL"
+                                    },
+                                    totalWeight: totalWeight,
+                                    excess: excess
+                                };
+                            }
+                        }
+                    });
+                }
+            }
+            
+            return {
+                feasible: bestSolution !== null,
+                solution: bestSolution
+            };
+        }
+        
+        /**
+         * Generate single container output with 3D coordinates
+         */
+        generateSingleContainerOutput(results, containerData, variants, action, tolerance) {
+            const solution = results.solution;
+            
+            if (solution.type === 'mixed') {
+                return this.generateMixedContainerOutput(solution, containerData, variants, action, tolerance);
+            }
+            
+            // Handle single variant container
+            const variant = variants[solution.variant];
+            const capacity = this.calculateMaxPalletsPerContainer(containerData, variant);
+            
+            const reams = Math.floor(solution.netWeight / variant.uomConversionRates.ream);
+            const cartons = Math.floor(solution.netWeight / variant.uomConversionRates.carton);
+            
+            const containerOutput = {
+                containerIndex: 1,
+                containerSize: containerData,
+                totalReamsCopyPaper: `${reams} RM`,
+                totalBoxesCopyPaper: `${cartons} CAR`,
+                totalPalletsCopyPaper: `${solution.pallets} PAL`,
+                item: [
+                    {
+                        product: variant.product,
+                        internalId: variant.internalId,
+                        displayName: variant.displayName,
+                        type: variant.type,
+                        layer: capacity.config.maxLayers,
+                        netWeight: (solution.netWeight / 1000).toFixed(3),
+                        netWeightKG: solution.netWeight.toFixed(3),
+                        grossWeight: (solution.grossWeight / 1000).toFixed(3),
+                        grossWeightKG: solution.grossWeight.toFixed(3),
+                        reams: `${reams} RM`,
+                        boxes: `${cartons} CAR`,
+                        palletsPerContainer: `${solution.pallets} PAL`,
+                        palletsPerLayer: `${capacity.config.palletsPerLayer} PAL`,
+                        productLayer: variant.layer,
+                        price: 0
+                    }
+                ]
+            };
+            
+            // Only generate 3D coordinates when action is "view3D"
+            if (action === 'view3D') {
+                containerOutput.coordinates3D = this.generate3DCoordinates(solution, containerData, variants);
+            }
+            
+            return {
+                containers: [containerOutput],
+                recommendedItems: this.generateRecommendations(solution, variant, containerData, tolerance)
+            };
+        }
+        
+        /**
+         * Generate mixed container output with 3D coordinates
+         */
+        generateMixedContainerOutput(solution, containerData, variants, action, tolerance) {
+            const totalReams = Math.floor(solution.totalNetWeight / variants[Object.keys(variants)[0]].uomConversionRates.ream);
+            const totalCartons = Math.floor(solution.totalNetWeight / variants[Object.keys(variants)[0]].uomConversionRates.carton);
+            
+            const items = solution.layers.map((layer, index) => {
+                const variant = variants[layer.variant];
+                const reams = Math.floor(layer.netWeight / variant.uomConversionRates.ream);
+                const cartons = Math.floor(layer.netWeight / variant.uomConversionRates.carton);
                 
                 return {
-                    product: packedBox.product,
-                    internalId: packedBox.internalId,
-                    displayName: packedBox.displayName,
-                    type: packedBox.type,
-                    layer: layerCountForContainer,
-                    netWeight: packedBox.netWeight.toFixed(3),
-                    netWeightKG: (packedBox.netWeight * 1000).toFixed(3),
-                    grossWeight: packedBox.grossWeight.toFixed(3),
-                    grossWeightKG: (packedBox.grossWeight * 1000).toFixed(3),
-                    reams: (Math.floor(packedBox.reamsPerContainer) || 0) + ' RM',
-                    boxes: (Math.floor(packedBox.boxesPerContainer) || 0) + ' CAR',
-                    palletsPerContainer: (Math.floor(packedBox.palletsPerContainer) || 0) + ' PAL',
-                    palletsPerLayer: (Math.floor(packedBox.palletsPerLayer) || 0) + ' PAL',
-                    productLayer: packedBox.productLayer,
-                    price: 0.0
+                    product: variant.product,
+                    internalId: variant.internalId,
+                    displayName: variant.displayName,
+                    type: variant.type,
+                    layer: layer.layerCount,
+                    netWeight: (layer.netWeight / 1000).toFixed(3),
+                    netWeightKG: layer.netWeight.toFixed(3),
+                    grossWeight: (layer.grossWeight / 1000).toFixed(3),
+                    grossWeightKG: layer.grossWeight.toFixed(3),
+                    reams: `${reams} RM`,
+                    boxes: `${cartons} CAR`,
+                    palletsPerContainer: `${layer.totalPallets} PAL`,
+                    palletsPerLayer: `${layer.palletsPerLayer} PAL`,
+                    productLayer: variant.layer,
+                    price: 0
                 };
             });
             
-            return {
-                containerIndex: Number(containerNo),
+            const containerOutput = {
+                containerIndex: 1,
                 containerSize: containerData,
-                totalReamsCopyPaper: (Math.floor(totalReamsCutsize) || 0) + ' RM',
-                totalBoxesCopyPaper: (Math.floor(totalBoxesCutsize) || 0) + ' CAR',
-                totalPalletsCopyPaper: (Math.floor(totalPalletsCopyPaper) || 0) + ' PAL',
-                item: formattedItems
+                totalReamsCopyPaper: `${totalReams} RM`,
+                totalBoxesCopyPaper: `${totalCartons} CAR`,
+                totalPalletsCopyPaper: `${solution.totalPallets} PAL`,
+                item: items
             };
-        });
-        
-        
-        var combinedResults3D = [];
-        var combinedResultsConcal = [];
-        
-        // combine cutsize
-        for (var i = 0; i < cutsizeResult3D.length; i++) {
-            combinedResults3D.push(cutsizeResult3D[i]);
-        }
-        
-        for (var i = 0; i < cutsizeResultConcal.length; i++) {
-            combinedResultsConcal.push(cutsizeResultConcal[i]);
-        }
-        
-        
-        var transformed = {
-            containers: [],
-        };
-        
-        if (!parsedBody.selectedOption || parsedBody.selectedOption.length === 0) {
-            transformed.recommendedItems = recommendedBestFitItems;
-        } else {
-            transformed.selectedOption = parsedBody.selectedOption;
             
-            if (parsedBody.selectedStatus === "adjustedQty") {
+            // Only generate 3D coordinates when action is "view3D"
+            if (action === 'view3D') {
+                containerOutput.coordinates3D = this.generate3DCoordinates(solution, containerData, variants);
+            }
+            
+            return {
+                containers: [containerOutput],
+                recommendedItems: this.generateMixedRecommendations(solution, variants, containerData, tolerance)
+            };
+        }
+        
+        /**
+         * Generate dual container output with 3D coordinates
+         */
+        generateDualContainerOutput(results, containerData, variants, action, tolerance) {
+            const solution = results.solution;
+            const containers = [];
+            
+            // Container 1
+            if (solution.container1.type === 'mixed') {
+                const container1 = this.generateMixedContainerOutput(solution.container1, containerData, variants, action, tolerance).containers[0];
+                container1.containerIndex = 1;
+                containers.push(container1);
+            } else {
+                const variant1 = variants[solution.container1.variant];
+                const capacity1 = this.calculateMaxPalletsPerContainer(containerData, variant1);
+                const reams1 = Math.floor(solution.container1.netWeight / variant1.uomConversionRates.ream);
+                const cartons1 = Math.floor(solution.container1.netWeight / variant1.uomConversionRates.carton);
                 
-                var nonNullCount = 0;
-                
-                for (var key in recommendedBestFitItems) {
-                    var arr = recommendedBestFitItems[key];
-                    var valid = false;
-                    
-                    for (var i = 0; i < arr.length; i++) {
-                        
-                        if (arr[i] !== null && arr[i] !== undefined) {
-                            valid = true;
-                            break;
+                const container1Output = {
+                    containerIndex: 1,
+                    containerSize: containerData,
+                    totalReamsCopyPaper: `${reams1} RM`,
+                    totalBoxesCopyPaper: `${cartons1} CAR`,
+                    totalPalletsCopyPaper: `${solution.container1.pallets} PAL`,
+                    item: [
+                        {
+                            product: variant1.product,
+                            internalId: variant1.internalId,
+                            displayName: variant1.displayName,
+                            type: variant1.type,
+                            layer: capacity1.config.maxLayers,
+                            netWeight: (solution.container1.netWeight / 1000).toFixed(3),
+                            netWeightKG: solution.container1.netWeight.toFixed(3),
+                            grossWeight: (solution.container1.grossWeight / 1000).toFixed(3),
+                            grossWeightKG: solution.container1.grossWeight.toFixed(3),
+                            reams: `${reams1} RM`,
+                            boxes: `${cartons1} CAR`,
+                            palletsPerContainer: `${solution.container1.pallets} PAL`,
+                            palletsPerLayer: `${capacity1.config.palletsPerLayer} PAL`,
+                            productLayer: variant1.layer,
+                            price: 0
                         }
-                    }
-                    
-                    if (valid) {
-                        nonNullCount++;
-                    }
+                    ]
+                };
+                
+                // Only generate 3D coordinates when action is "view3D"
+                if (action === 'view3D') {
+                    container1Output.coordinates3D = this.generate3DCoordinates(solution.container1, containerData, variants);
                 }
                 
-                if (nonNullCount === 0) {
-                    transformed.adjustedQtyStatus = "overLimit";
-                } else {
-                    transformed.adjustedQtyStatus = "ok";
-                }
+                containers.push(container1Output);
             }
-        }
-        
-        for (var i = 0; i < combinedResultsConcal.length; i++) {
-            var container = combinedResultsConcal[i];
-            transformed.containers.push(container);
-        }
-        
-        // Convert the combined result to JSON format
-        var jsonResult3D = combinedResults3D
-        var jsonResultConcal = transformed
-        
-        try {
-          //  saveFile(jsonResultConcal, jsonResult3D)
-            if (parsedBody.action == 'viewContainerList') {
-                return jsonResultConcal
-              
-            } else if (parsedBody.action == 'view3D') {
-                return jsonResult3D
+            
+            // Container 2
+            const variant2 = variants[solution.container2.variant];
+            const capacity2 = this.calculateMaxPalletsPerContainer(containerData, variant2);
+            const reams2 = Math.floor(solution.container2.netWeight / variant2.uomConversionRates.ream);
+            const cartons2 = Math.floor(solution.container2.netWeight / variant2.uomConversionRates.carton);
+            
+            // Calculate actual pallets per layer for container 2 (might be partial)
+            const actualLayersContainer2 = Math.ceil(solution.container2.pallets / capacity2.config.palletsPerLayer);
+            const palletsInLastLayer = solution.container2.pallets % capacity2.config.palletsPerLayer || capacity2.config.palletsPerLayer;
+            const displayPalletsPerLayer = actualLayersContainer2 === 1 ? solution.container2.pallets : palletsInLastLayer;
+            
+            const container2Output = {
+                containerIndex: 2,
+                containerSize: containerData,
+                totalReamsCopyPaper: `${reams2} RM`,
+                totalBoxesCopyPaper: `${cartons2} CAR`,
+                totalPalletsCopyPaper: `${solution.container2.pallets} PAL`,
+                item: [
+                    {
+                        product: variant2.product,
+                        internalId: variant2.internalId,
+                        displayName: variant2.displayName,
+                        type: variant2.type,
+                        layer: actualLayersContainer2,
+                        netWeight: (solution.container2.netWeight / 1000).toFixed(3),
+                        netWeightKG: solution.container2.netWeight.toFixed(3),
+                        grossWeight: (solution.container2.grossWeight / 1000).toFixed(3),
+                        grossWeightKG: solution.container2.grossWeight.toFixed(3),
+                        reams: `${reams2} RM`,
+                        boxes: `${cartons2} CAR`,
+                        palletsPerContainer: `${solution.container2.pallets} PAL`,
+                        palletsPerLayer: `${displayPalletsPerLayer} PAL`,
+                        productLayer: variant2.layer,
+                        price: 0
+                    }
+                ]
+            };
+            
+            // Only generate 3D coordinates when action is "view3D"
+            if (action === 'view3D') {
+                container2Output.coordinates3D = this.generate3DCoordinates(solution.container2, containerData, variants);
             }
-        } catch (e) {
-            log.error('Error Sending Data to Suitelet', e);
-            throw e;
+            
+            containers.push(container2Output);
+            
+            return {
+                containers: containers,
+                recommendedItems: this.generateDualContainerRecommendations(solution, variants, containerData, tolerance)
+            };
         }
         
-    }
-    
-    function sortByWeightAndVolume(groups) {
-        // Iterate over each group using a for loop
-        for (var group in groups) {
-            if (groups.hasOwnProperty(group)) {
-                // Sort each group's items by weight and volume
-                groups[group].sort(function (a, b) {
-                    if (b.weight !== a.weight) {
-                        return b.weight - a.weight; // Sort by weight first
-                    } else {
-                        return (b.length * b.width * b.height) - (a.length * a.width * a.height); // Sort by volume if weights are equal
+        /**
+         * Generate recommendations for optimization
+         */
+        generateRecommendations(solution, variant, containerData, tolerance) {
+            // Calculate max possible with full container utilization
+            const maxCapacity = this.calculateMaxPalletsPerContainer(containerData, variant);
+            if (!maxCapacity || !maxCapacity.config) return { option1: [] };
+            
+            const maxWeight = maxCapacity.maxPallets * variant.netWeight / 1000;
+            const currentWeight = solution.netWeight / 1000;
+            const suggestedIncrease = maxWeight - currentWeight;
+            
+            // Parse tolerance percentage and use it as threshold
+            const toleranceDecimal = this.parseTolerancePercent(tolerance);
+            const toleranceThreshold = currentWeight * toleranceDecimal;
+            
+            if (suggestedIncrease > toleranceThreshold) {
+                return {
+                    option1: [
+                        {
+                            type: "dedicated",
+                            action: "increase",
+                            internalId: variant.internalId,
+                            parentID: variant.parentID || variant.internalId,
+                            displayName: variant.parentName || variant.displayName.split(" AUTO")[0],
+                            suggestedQty: suggestedIncrease.toFixed(3),
+                            uom: "ton"
+                        }
+                    ]
+                };
+            }
+            
+            return { option1: [] };
+        }
+        
+        /**
+         * Generate 3D coordinates for pallets with heavy pallets at bottom
+         */
+        generate3DCoordinates(solution, containerData, variants) {
+            const coordinates = [];
+            
+            if (solution.type === 'mixed') {
+                // Sort layers by weight (heaviest first = bottom)
+                const sortedLayers = [...solution.layers].sort((a, b) => {
+                    const variantA = variants[a.variant];
+                    const variantB = variants[b.variant];
+                    return variantB.grossWeight - variantA.grossWeight;
+                });
+                
+                let currentZ = 0;
+                let palletId = 1;
+                
+                sortedLayers.forEach((layer, layerIndex) => {
+                    const variant = variants[layer.variant];
+                    
+                    // Calculate floor layout
+                    const orientation = this.getBestOrientation(containerData, variant);
+                    const palletsPerRowLength = Math.floor(containerData.length / orientation.l);
+                    const palletsPerRowWidth = Math.floor(containerData.width / orientation.w);
+                    
+                    // Generate coordinates for each layer
+                    for (let layerNum = 0; layerNum < layer.layerCount; layerNum++) {
+                        for (let row = 0; row < palletsPerRowWidth; row++) {
+                            for (let col = 0; col < palletsPerRowLength; col++) {
+                                const x = col * orientation.l + (orientation.l / 2);
+                                const y = row * orientation.w + (orientation.w / 2);
+                                const z = currentZ + (variant.height / 2);
+                                
+                                coordinates.push({
+                                    palletId: palletId++,
+                                    variant: layer.variant,
+                                    layer: layerIndex + 1,
+                                    subLayer: layerNum + 1,
+                                    position: {
+                                        x: x,
+                                        y: y,
+                                        z: z
+                                    },
+                                    dimensions: {
+                                        length: orientation.l,
+                                        width: orientation.w,
+                                        height: variant.height
+                                    },
+                                    rotation: orientation.l !== variant.length ? 90 : 0,
+                                    weight: {
+                                        net: variant.netWeight,
+                                        gross: variant.grossWeight
+                                    },
+                                    product: {
+                                        internalId: variant.internalId,
+                                        displayName: variant.displayName,
+                                        layer: variant.layer
+                                    }
+                                });
+                            }
+                        }
+                        currentZ += variant.height;
                     }
                 });
+            } else {
+                // Single variant loading
+                const variant = variants[solution.variant];
+                const capacity = this.calculateMaxPalletsPerContainer(containerData, variant);
+                const orientation = this.getBestOrientation(containerData, variant);
+                
+                const palletsPerRowLength = Math.floor(containerData.length / orientation.l);
+                const palletsPerRowWidth = Math.floor(containerData.width / orientation.w);
+                const palletsPerLayer = palletsPerRowLength * palletsPerRowWidth;
+                const totalLayers = Math.ceil(solution.pallets / palletsPerLayer);
+                
+                let palletId = 1;
+                let currentZ = 0;
+                
+                for (let layer = 0; layer < totalLayers; layer++) {
+                    const palletsInThisLayer = Math.min(palletsPerLayer, solution.pallets - (layer * palletsPerLayer));
+                    
+                    let palletCount = 0;
+                    for (let row = 0; row < palletsPerRowWidth && palletCount < palletsInThisLayer; row++) {
+                        for (let col = 0; col < palletsPerRowLength && palletCount < palletsInThisLayer; col++) {
+                            const x = col * orientation.l + (orientation.l / 2);
+                            const y = row * orientation.w + (orientation.w / 2);
+                            const z = currentZ + (variant.height / 2);
+                            
+                            coordinates.push({
+                                palletId: palletId++,
+                                variant: solution.variant,
+                                layer: layer + 1,
+                                subLayer: 1,
+                                position: {
+                                    x: x,
+                                    y: y,
+                                    z: z
+                                },
+                                dimensions: {
+                                    length: orientation.l,
+                                    width: orientation.w,
+                                    height: variant.height
+                                },
+                                rotation: orientation.l !== variant.length ? 90 : 0,
+                                weight: {
+                                    net: variant.netWeight,
+                                    gross: variant.grossWeight
+                                },
+                                product: {
+                                    internalId: variant.internalId,
+                                    displayName: variant.displayName,
+                                    layer: variant.layer
+                                }
+                            });
+                            palletCount++;
+                        }
+                    }
+                    currentZ += variant.height;
+                }
             }
+            
+            return coordinates;
         }
         
-        // Sort the groups themselves based on the first item's weight in each group
-        var sortedGroups = Object.keys(groups);
-        if (sortedGroups.length > 1) {
-            sortedGroups.sort(function (a, b) {
-                if (!groups[a].length || !groups[b].length) {
-                    return 0;
-                }
+        /**
+         * Get best orientation for a variant
+         */
+        getBestOrientation(containerData, variant) {
+            const orientations = [
+                { l: variant.length, w: variant.width },
+                { l: variant.width, w: variant.length }
+            ];
+            
+            let bestOrientation = null;
+            let maxPallets = 0;
+            
+            orientations.forEach(orientation => {
+                const palletsPerRowLength = Math.floor(containerData.length / orientation.l);
+                const palletsPerRowWidth = Math.floor(containerData.width / orientation.w);
+                const palletsPerLayer = palletsPerRowLength * palletsPerRowWidth;
+                const maxLayers = Math.floor(containerData.height / variant.height);
+                const totalPallets = palletsPerLayer * maxLayers;
                 
-                var totalWeightA = 0;
-                var totalWeightB = 0;
-                for (var i = 0; i < groups[a].length; i++) {
-                    totalWeightA += groups[a][i].weight || 0;
-                }
-                for (var j = 0; j < groups[b].length; j++) {
-                    totalWeightB += groups[b][j].weight || 0;
-                }
-                
-                if (totalWeightB !== totalWeightA) {
-                    return totalWeightB - totalWeightA; // Sort by total weight first
-                } else {
-                    var totalVolumeA = 0;
-                    var totalVolumeB = 0;
-                    
-                    for (var i = 0; i < groups[a].length; i++) {
-                        totalVolumeA += (groups[a][i].length || 0) * (groups[a][i].width || 0) * (groups[a][i].height || 0);
-                    }
-                    for (var j = 0; j < groups[b].length; j++) {
-                        totalVolumeB += (groups[b][j].length || 0) * (groups[b][j].width || 0) * (groups[b][j].height || 0);
-                    }
-                    
-                    return totalVolumeB - totalVolumeA; // Sort by total volume if weights are equal
+                if (totalPallets > maxPallets) {
+                    maxPallets = totalPallets;
+                    bestOrientation = orientation;
                 }
             });
+            
+            return bestOrientation || orientations[0];
         }
         
-        
-        // Reorder the groups object based on the sorted group keys
-        var orderedGroups = {};
-        for (var i = 0; i < sortedGroups.length; i++) {
-            var groupKey = sortedGroups[i];
-            orderedGroups[groupKey] = groups[groupKey];
-        }
-        
-        return orderedGroups;
-    }
-    
-    
-    
-    function generateLogicalRotations(box) {
-        return [
-            {
-                width: box.width,
-                height: box.height,
-                length: box.length,
-                weight: box.weight,
-                product: box.product,
-                price: box.price,
-                layer: box.layer
-            },
-            {
-                width: box.length,
-                height: box.height,
-                length: box.width,
-                weight: box.weight,
-                product: box.product,
-                price: box.price,
-                layer: box.layer
+        generateMixedRecommendations(solution, variants, containerData, tolerance) {
+            // For mixed loading, calculate potential improvement to full mixed capacity
+            const mixedCapacity = this.calculateMixedLoading(containerData, variants);
+            if (!mixedCapacity || mixedCapacity.totalNetWeight <= solution.totalNetWeight) {
+                return { option1: [] };
             }
-        ];
-    }
-    
-    function canFit(currentPosition, box) {
-        return (
-            box.length <= currentPosition.remainingLength &&
-            box.width <= currentPosition.remainingWidth &&
-            box.height <= currentPosition.remainingHeight
-        );
-    }
-    
-    
-    function saveFile(jsonResultConcal, jsonResult3D){
-        // Save data into file cabinet
-        var fileObj3D = file.create({
-            name: '3D_input_ftn_new.json',
-            fileType: file.Type.JSON,
-            contents: JSON.stringify(jsonResult3D),
-            folder: 12262
-        });
-        fileId3D = fileObj3D.save();
+            
+            const currentWeight = solution.totalNetWeight / 1000;
+            const suggestedIncrease = (mixedCapacity.totalNetWeight - solution.totalNetWeight) / 1000;
+            
+            // Parse tolerance percentage and use it as threshold
+            const toleranceDecimal = this.parseTolerancePercent(tolerance);
+            const toleranceThreshold = currentWeight * toleranceDecimal;
+            
+            if (suggestedIncrease > toleranceThreshold) {
+                const firstVariant = variants[Object.keys(variants)[0]];
+                return {
+                    option1: [
+                        {
+                            type: "dedicated",
+                            action: "increase",
+                            internalId: firstVariant.internalId,
+                            parentID: firstVariant.parentID || firstVariant.internalId,
+                            displayName: firstVariant.parentName || firstVariant.displayName.split(" AUTO")[0],
+                            suggestedQty: suggestedIncrease.toFixed(3),
+                            uom: "ton"
+                        }
+                    ]
+                };
+            }
+            
+            return { option1: [] };
+        }
         
-        var fileObjConcal = file.create({
-            name: 'ConCal_input_ftn.json',
-            fileType: file.Type.JSON,
-            contents:  JSON.stringify(jsonResultConcal),
-            folder: 17979
-        });
-        var fileIdConcal = fileObjConcal.save();
-        log.debug('File Saved', 'File ID 3D Input: ' + fileId3D);
-        log.debug('File Saved', 'File ID Concal Input: ' + fileIdConcal);
+        /**
+         * Generate recommendations for dual container setup
+         */
+        generateDualContainerRecommendations(solution, variants, containerData, tolerance) {
+            // For dual container, calculate total possible capacity with both containers
+            const firstVariantKey = Object.keys(variants)[0];
+            const firstVariant = variants[firstVariantKey];
+            
+            // Calculate max capacity for dual container scenario
+            const singleContainerCapacity = this.calculateMaxPalletsPerContainer(containerData, firstVariant);
+            if (!singleContainerCapacity || !singleContainerCapacity.config) return { option1: [] };
+            
+            const maxPossiblePerContainer = singleContainerCapacity.maxPallets * firstVariant.netWeight / 1000;
+            const maxTotalWeight = maxPossiblePerContainer * 2; // 2 containers
+            
+            const currentTotalWeight = solution.totalWeight / 1000;
+            const suggestedIncrease = maxTotalWeight - currentTotalWeight;
+            
+            // Parse tolerance percentage and use it as threshold
+            const toleranceDecimal = this.parseTolerancePercent(tolerance);
+            const toleranceThreshold = currentTotalWeight * toleranceDecimal;
+            
+            if (suggestedIncrease > toleranceThreshold) {
+                return {
+                    option1: [
+                        {
+                            type: "dedicated",
+                            action: "increase",
+                            internalId: firstVariant.internalId,
+                            parentID: firstVariant.parentID || firstVariant.internalId,
+                            displayName: firstVariant.parentName || firstVariant.displayName.split(" AUTO")[0],
+                            suggestedQty: suggestedIncrease.toFixed(3),
+                            uom: "ton"
+                        }
+                    ]
+                };
+            }
+            
+            return { option1: [] };
+        }
+        
+        /**
+         * Generate alternative suggestions when no solution is found
+         */
+        generateAlternativeSuggestions(targetWeightKg, variants, variantCapacities, containerData) {
+            const suggestions = [];
+            
+            // Calculate maximum possible with current container (including mixed loading)
+            let maxPossible = 0;
+            
+            // Check single variant maximums
+            Object.keys(variants).forEach(layer => {
+                const capacity = variantCapacities[layer];
+                if (capacity) {
+                    const variantMax = capacity.maxPallets * variants[layer].netWeight;
+                    maxPossible = Math.max(maxPossible, variantMax);
+                }
+            });
+            
+            // Check mixed loading maximum
+            const mixedCapacity = this.calculateMixedLoading(containerData, variants);
+            if (mixedCapacity) {
+                maxPossible = Math.max(maxPossible, mixedCapacity.totalNetWeight);
+            }
+            
+            // If target weight is too high, suggest reducing quantity
+            if (targetWeightKg > maxPossible) {
+                const maxPossibleTons = maxPossible / 1000;
+                const reduction = (targetWeightKg - maxPossible) / 1000;
+                
+                suggestions.push({
+                    type: "quantity_reduction",
+                    action: "decrease",
+                    suggestion: `Reduce quantity by ${reduction.toFixed(3)} tons`,
+                    maxPossible: maxPossibleTons.toFixed(3),
+                    suggestedQty: reduction.toFixed(3),
+                    reason: `Current container can only hold maximum ${maxPossibleTons.toFixed(3)} tons`
+                });
+            }
+            
+            return suggestions;
+        }
     }
     
-    return {greedyCalcCutsize}
-})
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    /**
+     * Main entry point
+     */
+    function greedyCalcCutsize(inputData) {
+        // Process input data with new format
+        try {
+            const calculator = new ContainerLoadingCalculator();
+            const result = calculator.calculateOptimalLoading(inputData);
+            log.debug('result', result)
+            
+            return result;
+            
+        } catch (error) {
+            log.error('Container Loading Error', error);
+            return {
+                error: error.message,
+                stack: error.stack
+            };
+        }
+    }
+    
+    return {
+        greedyCalcCutsize
+    };
+});
