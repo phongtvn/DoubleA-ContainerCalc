@@ -8,7 +8,7 @@ define([
         'N/error','N/file','N/record','N/runtime','N/search','N/cache','./Calc/greedyCalc'],
     
     function(error, file, record, runtime, search, cache, calc) {
-        
+        //todo: cover shipt to country on the item
         /**
          * Main Suitelet Entry Point
          * Handles container packing calculations for paper products
@@ -20,6 +20,7 @@ define([
                 }
                 
                 const requestData = JSON.parse(context.request.body)
+                log.debug('requestData', requestData)
                 const processor = new ContainerPackingProcessor(requestData);
                 const result = processor.process();
                 
@@ -94,7 +95,7 @@ define([
                 const containerId = item.custpage_container.id;
                 const containerRec = record.load({
                     type: 'customrecord_exp_containerssize',
-                    id: containerId
+                    id:  containerId
                 });
                 
                 return {
@@ -138,7 +139,7 @@ define([
                 const containerPalletSearch = search.create({
                     type: 'customrecord_container_pallet_by_cust',
                     filters: [['custrecord_customer', 'is', this.customerId]],
-                    columns: ['custrecord_country', 'custrecord_pallet_type', 'custrecord_tolerance']
+                    columns: ['custrecord_country', 'custrecord_customer_pallet_default', 'custrecord_tolerance']
                 });
                 
                 const results = containerPalletSearch.run().getRange({ start: 0, end: 1 });
@@ -146,7 +147,7 @@ define([
                 if (results.length > 0) {
                     const result = results[0];
                     return {
-                        customerPallet: result.getValue('custrecord_pallet_type')?.split(',') || [],
+                        customerPallet: result.getValue('custrecord_customer_pallet_default'),
                         tolerance: result.getValue('custrecord_tolerance')
                     };
                 }
@@ -192,7 +193,6 @@ define([
             calculateResults: function() {
                 const payload = this.buildPayload();
                 log.debug('Processing payload', JSON.stringify(payload, null, 2));
-                
                 return calc.greedyCalcCutsize(payload);
               
             }
@@ -404,7 +404,7 @@ define([
              * Process copy paper items
              */
             processCopyPaper: function(itemData, specialConditions) {
-                const weight = this.quantity / 100;
+                const weight = this.quantity // / 100;
                 const itemVariants = this.loadItemVariants(itemData, specialConditions);
                 
                 const variants = [];
@@ -432,7 +432,7 @@ define([
             loadItemVariants: function(itemData, specialConditions) {
                 const filters = this.buildVariantFilters(specialConditions);
                 filters.push('AND', ['parent', 'is', this.itemId]);
-                
+                filters.push('AND', ['custitem_infor_for_sales_country', 'is', this.customerData.shipToCountry]);
                 return this.searchItemData(itemData.itemType, filters);
             },
             
@@ -609,6 +609,7 @@ define([
             });
             
             if (action === 'viewContainerList') {
+                log.debug('result viewContainerList', result)
                 context.response.write(JSON.stringify(result));
             } else if (action === 'view3D') {
                 const cacheKey = 'key_' + Date.now();
@@ -621,6 +622,8 @@ define([
                 });
                 
                 const redirectUrl = SUITELET_3D_URL + '&key=' + cacheKey;
+                log.debug('redirectUrl', redirectUrl)
+                
                 context.response.write(JSON.stringify({ redirectUrl }));
             }
         }

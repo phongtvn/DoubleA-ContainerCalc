@@ -32,7 +32,7 @@ define(['N/cache', 'N/ui/serverWidget', 'N/file'], function (cache, serverWidget
                 log.debug('cachedData Received', cachedData);
 
                 if (!cachedData) {
-                throw new Error('Cached data expired or not found');
+                    throw new Error('Cached data expired or not found');
                 }
 
                 var jsonResult3D = JSON.parse(cachedData);
@@ -43,26 +43,23 @@ define(['N/cache', 'N/ui/serverWidget', 'N/file'], function (cache, serverWidget
                     return;
                 }
 
-                if (jsonResult3D) {
-                    try {
-                        var jsonDataString = jsonResult3D;
-                        if (jsonDataString) {
-                            containersData = jsonDataString;
-                        } else {
-                            log.debug('No valid JSON data received.');
-                        }
-                    } catch (jsonError) {
-                        log.debug('Error parsing JSON', jsonError.message);
-                    }
-                } else {
-                    log.debug('File has no data.');
-                }
-
+                
+                const containers = jsonResult3D.containers
+                
+                log.debug('containers', containers)
+                containersData =   containers.map((container) =>{
+                    const cont = container
+                    cont.item =  container.coordinates3D
+                    return cont
+                })
+                
+                log.debug('containersData', containersData)
+                
                 var containerButtons = containersData.map((container, index) => `
                     <div class="container-box" onclick="changeContainer(${index})">
                         <h3>Container ${index + 1}</h3>
                         <div class="details" id="details-${index}" style="display: none;">
-                        <p>Container Size: ${container.width} x ${container.height} x ${container.length}</p>
+                        <p>Container Size: ${container.containerSize.width} x ${container.containerSize.height} x ${container.containerSize.length}</p>
 
                         ${(container.type === "Roll" || container.type === "CM Roll" || container.type === "wrapper") ? `
                             <p>Rolls: ${container.item ? container.rollsPerContainer || 0 : 0}</p>
@@ -502,7 +499,7 @@ define(['N/cache', 'N/ui/serverWidget', 'N/file'], function (cache, serverWidget
                         <div class="container-box" onclick="changeContainer(${index})">
                             <h3>Container ${index + 1}</h3>
                             <div class="details" id="details-${index}" style="display: none;">
-                            <p>Container Size: ${container.width} x ${container.height} x ${container.length}</p>
+                            <p>Container Size: ${container.containerSize.width} x ${container.containerSize.height} x ${container.containerSize.length}</p>
 
                             ${(container.type === "Roll" || container.type === "CM Roll" || container.type === "wrapper") ? `
                                 <p>Rolls: ${container.item ? container.rollsPerContainer || 0 : 0}</p>
