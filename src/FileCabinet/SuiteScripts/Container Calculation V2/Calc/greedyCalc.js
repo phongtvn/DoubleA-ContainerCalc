@@ -6,8 +6,12 @@ define(['N/file'], function (file) {
     /**
      * Container Loading Calculator with Unified Sequential Filling
      * Simplified approach: Always use sequential filling for any number of containers
+     * Updated: Assumes all variants have the same pallet type
      */
+    
+    const imgurl = "https://sca.doubleapaper.com/assets/Container_Image/container.png";
     class ContainerLoadingCalculator {
+        
         
         constructor() {
             // Constructor intentionally empty since container data now comes from input
@@ -44,8 +48,8 @@ define(['N/file'], function (file) {
                 const targetWeightTons = firstProduct.weight || 0;
                 const targetWeightKg = targetWeightTons * 1000; // Convert to kg
                 
-                // Get all variants from the product group and group by pallet type
-                const variantsByPalletType = {};
+                // Get all variants from the product group (no pallet type grouping needed)
+                const variants = {};
                 
                 firstProduct.variants.forEach(item => {
                     const uniqueKey = item.internalId;
@@ -66,50 +70,28 @@ define(['N/file'], function (file) {
                         parentName: item.parentName
                     };
                     
-                    // Group by pallet type (constraint: 1 container = 1 pallet type)
-                    if (!variantsByPalletType[item.palletType]) {
-                        variantsByPalletType[item.palletType] = {};
-                    }
-                    variantsByPalletType[item.palletType][uniqueKey] = variant;
+                    variants[uniqueKey] = variant;
                 });
                 
-                log.debug('variantsByPalletType', variantsByPalletType);
+                //  log.debug('variants', variants);
                 
-                // Find best solution across all pallet types using unified sequential approach
-                let bestSolution = null;
-                let bestPalletType = null;
-                let bestVariants = null;
+                // Use sequential filling directly on all variants
+                const solution = this.trySequentialContainers(
+                    targetWeightKg,
+                    variants,
+                    containerData,
+                    tolerance
+                );
                 
-                Object.keys(variantsByPalletType).forEach(palletType => {
-                    const variants = variantsByPalletType[palletType];
-                    
-                    // Always use sequential filling - works for 1, 2, or many containers
-                    const solutionForPalletType = this.trySequentialContainers(
-                        targetWeightKg,
-                        variants,
-                        containerData,
-                        tolerance
-                    );
-                    
-                    if (solutionForPalletType.feasible) {
-                        if (!bestSolution || this.isBetterSolution(solutionForPalletType, bestSolution, targetWeightKg)) {
-                            bestSolution = solutionForPalletType;
-                            bestPalletType = palletType;
-                            bestVariants = variants;
-                        }
-                    }
-                });
+                // log.debug('solution', solution);
                 
-                log.debug('bestSolution', bestSolution);
-                log.debug('bestPalletType', bestPalletType);
-                
-                if (bestSolution) {
-                    return this.generateSequentialOutput(bestSolution, containerData, bestVariants, action, tolerance);
+                if (solution.feasible) {
+                    return this.generateSequentialOutput(solution, containerData, variants, action, tolerance);
                 }
                 
-                // Return error if no solution found across all pallet types
+                // Return error if no solution found
                 return {
-                    error: "No feasible solution found for any pallet type"
+                    error: "No feasible solution found"
                 };
                 
             } catch (error) {
@@ -158,23 +140,23 @@ define(['N/file'], function (file) {
                     
                     // Smart stopping logic: Consider both tolerance and efficiency
                     const shortfallPercent = remainingWeight / targetWeightKg;
-
+                    
                     // Stop if shortfall is within tolerance (business acceptable)
                     if (shortfallPercent <= toleranceDecimal) {
-                        log.debug('Shortfall within tolerance, stopping', {
-                            remainingWeight: remainingWeight,
-                            shortfallPercent: (shortfallPercent * 100).toFixed(2) + '%',
-                            tolerance: (toleranceDecimal * 100).toFixed(1) + '%'
-                        });
+                        // log.debug('Shortfall within tolerance, stopping', {
+                        //     remainingWeight: remainingWeight,
+                        //     shortfallPercent: (shortfallPercent * 100).toFixed(2) + '%',
+                        //     tolerance: (toleranceDecimal * 100).toFixed(1) + '%'
+                        // });
                         break;
                     }
-
+                    
                     // Stop if remaining weight is truly negligible (< 1% of total target)
                     if (remainingWeight <= targetWeightKg * 0.01) {
-                        log.debug('Remaining weight negligible, stopping', {
-                            remainingWeight: remainingWeight,
-                            percentOfTotal: (remainingWeight / targetWeightKg * 100).toFixed(2) + '%'
-                        });
+                        // log.debug('Remaining weight negligible, stopping', {
+                        //     remainingWeight: remainingWeight,
+                        //     percentOfTotal: (remainingWeight / targetWeightKg * 100).toFixed(2) + '%'
+                        // });
                         break;
                     }
                 } else {
@@ -259,17 +241,10 @@ define(['N/file'], function (file) {
                     Math.max(1, Math.floor(idealPallets)),
                     Math.max(1, Math.ceil(idealPallets)),
                     Math.max(1, Math.round(idealPallets)),
-                    maxPallets // <= thêm biên đầy tối đa
+                    maxPallets // Add maximum capacity option
                 ].filter(p => p > 0 && p <= maxPallets);
                 
-                // Try a range of pallet counts around the ideal
-                // const palletOptions = [
-                //     Math.max(1, Math.floor(idealPallets)),
-                //     Math.max(1, Math.ceil(idealPallets)),
-                //     Math.max(1, Math.round(idealPallets))
-                // ].filter(p => p <= maxPallets);
-                
-                // Remove duplicates and add boundary options if reasonable
+                // Remove duplicates
                 const uniquePalletOptions = [...new Set(palletOptions)];
                 
                 uniquePalletOptions.forEach(pallets => {
@@ -423,33 +398,6 @@ define(['N/file'], function (file) {
         }
         
         /**
-         * Compare solutions to determine which is better
-         */
-        isBetterSolution(solution1, solution2, targetWeightKg) {
-            const excess1 = Math.max(0, solution1.solution.totalWeight - targetWeightKg);
-            const excess2 = Math.max(0, solution2.solution.totalWeight - targetWeightKg);
-            
-            // Prefer solution with less excess (significant difference threshold)
-            if (Math.abs(excess1 - excess2) > targetWeightKg * 0.01) { // 1% threshold
-                return excess1 < excess2;
-            }
-            
-            // If similar excess, prefer fewer containers
-            const containers1 = solution1.solution.containerCount || 1;
-            const containers2 = solution2.solution.containerCount || 1;
-            
-            if (containers1 !== containers2) {
-                return containers1 < containers2;
-            }
-            
-            // If same container count, prefer higher utilization
-            const utilization1 = solution1.solution.totalWeight / targetWeightKg;
-            const utilization2 = solution2.solution.totalWeight / targetWeightKg;
-            
-            return utilization1 > utilization2;
-        }
-        
-        /**
          * Generate output for sequential container solution
          */
         generateSequentialOutput(results, containerData, variants, action, tolerance) {
@@ -524,10 +472,6 @@ define(['N/file'], function (file) {
         }
         
         generateMixedContainerOutput(container, containerData, variants, action) {
-           // const firstVariant = variants[Object.keys(variants)[0]];
-            // const totalReams = Math.floor(container.totalNetWeight / firstVariant.uomConversionRates.ream);
-            // const totalCartons = Math.floor(container.totalNetWeight / firstVariant.uomConversionRates.carton);
-            
             const totalReams = container.layers.reduce((sum, layer) => {
                 const v = variants[layer.variant];
                 return sum + Math.floor(layer.netWeight / v.uomConversionRates.ream);
@@ -567,6 +511,7 @@ define(['N/file'], function (file) {
             
             const containerOutput = {
                 containerIndex: container.containerIndex,
+                imgurl: imgurl,
                 containerSize: containerData,
                 totalReamsCopyPaper: `${totalReams} RM`,
                 totalBoxesCopyPaper: `${totalCartons} CAR`,
@@ -591,6 +536,7 @@ define(['N/file'], function (file) {
             
             const containerOutput = {
                 containerIndex: container.containerIndex,
+                imgurl: imgurl,
                 containerSize: containerData,
                 type: variant.type,
                 width: containerData.width,
@@ -630,7 +576,6 @@ define(['N/file'], function (file) {
          */
         generateSequentialRecommendations(solution, variants, containerData, tolerance) {
             const recommendations = {};
-          //  const recommendations = { option1: [], option2: [] };
             
             // Calculate mixed loading capacity for full containers
             const mixedCapacity = this.calculateMixedLoading(containerData, variants);
@@ -638,9 +583,35 @@ define(['N/file'], function (file) {
             
             const firstVariant = variants[Object.keys(variants)[0]];
             const currentContainers = solution.containerCount;
-            const currentWeightTons = solution.totalWeight / 1000;
+            const currentWeightTons = Math.floor(solution.totalWeight) / 1000;
             
-            
+            // PRIORITY 1: If we have excess weight, suggest customer to increase order to match optimal solution
+            if (solution.totalExcess > 0) {
+                const excessTons = solution.totalExcess / 1000;
+                //   const toleranceDecimal = this.parseTolerancePercent(tolerance);
+                const excessPercent = solution.totalExcess / solution.totalWeight;
+                //log.debug('excessTons', excessTons)
+                // Only suggest if excess is meaningful (> 1% of total weight)
+                if (excessPercent > 0.001) {
+                    recommendations.option1 = [];
+                    recommendations.option1.push({
+                        type: "match_optimal_loading",
+                        action: "increase",
+                        internalId: firstVariant.internalId,
+                        parentID: firstVariant.parentID || firstVariant.internalId,
+                        displayName: firstVariant.parentName || firstVariant.displayName.split(" AUTO")[0],
+                        suggestedQty: excessTons.toFixed(3),
+                        uom: "ton",
+                        currentWeight: (currentWeightTons - excessTons).toFixed(3),
+                        targetWeight: currentWeightTons.toFixed(3),
+                        containers: currentContainers,
+                        utilizationStatus: "OPTIMAL",
+                        note: `Increase order to ${currentWeightTons.toFixed(3)} tons to match optimal container loading solution`
+                    });
+                    
+                    return recommendations;
+                }
+            }
             
             // If we have partial containers, offer clear business choices
             if (currentContainers > 0 && mixedCapacityPerContainer > 0) {
@@ -652,8 +623,7 @@ define(['N/file'], function (file) {
                 const toleranceDecimal = this.parseTolerancePercent(tolerance);
                 const ratioLack = (fullContainersWeight > 0) ? (increaseNeeded / fullContainersWeight) : 0;
                 
-                if (ratioLack > toleranceDecimal) { // chỉ gợi ý nếu thiếu vượt quá % tolerance
-            //    if (increaseNeeded > this.parseTolerancePercent(tolerance)) { // Only suggest if meaningful increase
+                if (ratioLack > toleranceDecimal) { // Only suggest if shortage exceeds tolerance
                     recommendations.option1 = []
                     recommendations.option1.push({
                         type: "optimize_full_containers",
@@ -669,34 +639,10 @@ define(['N/file'], function (file) {
                         note: `Increase to ${fullContainersWeight.toFixed(3)} tons for optimal ${currentContainers}-container utilization`
                     });
                 }
-                /* Tạm thời không đề xuất giảm
-                // OPTION 2: Decrease to previous full container level (cost savings)
-                if (currentContainers > 1) {
-                    const reducedContainers = currentContainers - 1;
-                    const reducedWeight = reducedContainers * mixedCapacityPerContainer / 1000; // tons
-                    const decreaseAmount = currentWeightTons - reducedWeight;
-                    
-                    if (decreaseAmount > 0.1) { // Only suggest if meaningful decrease
-                        recommendations.option2.push({
-                            type: "reduce_to_full_containers",
-                            action: "decrease",
-                            internalId: firstVariant.internalId,
-                            parentID: firstVariant.parentID || firstVariant.internalId,
-                            displayName: firstVariant.parentName || firstVariant.displayName.split(" AUTO")[0],
-                            suggestedQty: decreaseAmount.toFixed(3),
-                            uom: "ton",
-                            targetWeight: reducedWeight.toFixed(3),
-                            containers: reducedContainers,
-                            utilizationStatus: "FULL",
-                            costSaving: "SIGNIFICANT",
-                            note: `Reduce to ${reducedWeight.toFixed(3)} tons for ${reducedContainers} full containers (cost savings)`
-                        });
-                    }
-                }*/
             }
             
             // If no meaningful options, provide general optimization suggestions
-            if (recommendations.option1 && recommendations.option1.length === 0) {
+            if (!recommendations.option1 || recommendations.option1.length === 0) {
                 
                 // Check if we have remaining weight worth mentioning
                 if (solution.remainingWeight > 0 && solution.remainingWeight > solution.totalWeight * 0.05) {
@@ -714,9 +660,7 @@ define(['N/file'], function (file) {
                         note: `Add ${remainingTons.toFixed(3)} tons to complete the order`
                     });
                 }
-                
             }
-            
             
             return recommendations;
         }
@@ -734,8 +678,8 @@ define(['N/file'], function (file) {
             if (!containerData) return null;
             
             const orientations = [
-                { l: variant.length, w: variant.width },
-                { l: variant.width, w: variant.length }
+                { l: variant.length, w: variant.width, name: 'original' },
+                { l: variant.width, w: variant.length, name: 'rotated' }
             ];
             
             let maxPallets = 0;
@@ -756,6 +700,9 @@ define(['N/file'], function (file) {
                         palletsPerLayer: palletsPerLayer,
                         maxLayers: maxLayers,
                         orientation: `${orientation.l}x${orientation.w}`,
+                        orientationName: orientation.name,
+                        actualLength: orientation.l,  // Actual length used in 3D
+                        actualWidth: orientation.w,   // Actual width used in 3D
                         palletsPerRowLength: palletsPerRowLength,
                         palletsPerRowWidth: palletsPerRowWidth
                     };
@@ -777,8 +724,8 @@ define(['N/file'], function (file) {
             // Get optimal floor layout
             const firstVariant = variants[variantKeys[0]];
             const orientations = [
-                { l: firstVariant.length, w: firstVariant.width },
-                { l: firstVariant.width, w: firstVariant.length }
+                { l: firstVariant.length, w: firstVariant.width, name: 'original' },
+                { l: firstVariant.width, w: firstVariant.length, name: 'rotated' }
             ];
             
             let bestFloorLayout = null;
@@ -794,6 +741,9 @@ define(['N/file'], function (file) {
                     bestFloorLayout = {
                         palletsPerLayer,
                         orientation: `${orientation.l}x${orientation.w}`,
+                        orientationName: orientation.name,
+                        actualLength: orientation.l,
+                        actualWidth: orientation.w,
                         palletsPerRowLength: palletsPerRowLength,
                         palletsPerRowWidth: palletsPerRowWidth
                     };
@@ -829,8 +779,9 @@ define(['N/file'], function (file) {
                             
                             if (totalHeight <= containerData.height) {
                                 const totalPallets = (heavyLayers + lightLayers) * bestFloorLayout.palletsPerLayer;
-                                const totalNetWeight = (heavyLayers * bestFloorLayout.palletsPerLayer * heavierVariant.netWeight) +
-                                    (lightLayers * bestFloorLayout.palletsPerLayer * lighterVariant.netWeight);
+                                const totalNetWeight = Math.round((heavyLayers * bestFloorLayout.palletsPerLayer * heavierVariant.netWeight) +
+                                    (lightLayers * bestFloorLayout.palletsPerLayer * lighterVariant.netWeight))
+                                
                                 const totalGrossWeight = (heavyLayers * bestFloorLayout.palletsPerLayer * heavierVariant.grossWeight) +
                                     (lightLayers * bestFloorLayout.palletsPerLayer * lighterVariant.grossWeight);
                                 
@@ -902,8 +853,13 @@ define(['N/file'], function (file) {
                         for (let layerNum = 0; layerNum < layer.layerCount; layerNum++) {
                             for (let row = 0; row < floorLayout.palletsPerRowWidth; row++) {
                                 for (let col = 0; col < floorLayout.palletsPerRowLength; col++) {
-                                    const x = col * variant.width;
-                                    const z = row * variant.length;
+                                    // Use actual dimensions from floor layout
+                                    const actualLength = floorLayout.actualLength;
+                                    const actualWidth = floorLayout.actualWidth;
+                                    
+                                    // Map to container coordinate system: X=width, Z=length
+                                    const x = row * actualWidth;   // row maps to container width
+                                    const z = col * actualLength;  // col maps to container length
                                     const y = currentZ;
                                     
                                     coordinates.push({
@@ -918,14 +874,14 @@ define(['N/file'], function (file) {
                                             weight: Math.round(variant.netWeight / 20) // Weight per box approximation
                                         },
                                         packedDimensions: {
-                                            width: variant.width,
+                                            width: actualWidth,
                                             height: variant.height,
-                                            length: variant.length
+                                            length: actualLength
                                         },
                                         remainingDimensions: {
-                                            remainingWidth: (containerData.width - ((col + 1) * variant.width)).toFixed(2),
+                                            remainingWidth: (containerData.width - ((row + 1) * actualWidth)).toFixed(2),
                                             remainingHeight: (containerData.height - (y + variant.height)).toFixed(2),
-                                            remainingLength: (containerData.length - ((row + 1) * variant.length)).toFixed(2)
+                                            remainingLength: (containerData.length - ((col + 1) * actualLength)).toFixed(2)
                                         },
                                         color: layer.position === 'bottom' ? "0x191970" : "0x4169E1", // Different colors for different layers
                                         type: variant.type || "cutsize",
@@ -949,6 +905,10 @@ define(['N/file'], function (file) {
                     const palletsPerLayer = capacity.config.palletsPerLayer;
                     const totalLayers = Math.ceil(container.pallets / palletsPerLayer);
                     
+                    // Get actual dimensions from capacity config
+                    const actualLength = capacity.config.actualLength;
+                    const actualWidth = capacity.config.actualWidth;
+                    
                     let currentZ = 0;
                     let palletCount = 0;
                     
@@ -958,8 +918,10 @@ define(['N/file'], function (file) {
                         let layerPalletCount = 0;
                         for (let row = 0; row < palletsPerRowWidth && layerPalletCount < palletsInThisLayer; row++) {
                             for (let col = 0; col < palletsPerRowLength && layerPalletCount < palletsInThisLayer; col++) {
-                                const x = col * variant.width;
-                                const z = row * variant.length;
+                                // Use actual dimensions based on chosen orientation
+                                // Map to container coordinate system: X=width, Z=length
+                                const x = row * actualWidth;   // row maps to container width
+                                const z = col * actualLength;  // col maps to container length
                                 const y = currentZ;
                                 
                                 coordinates.push({
@@ -974,14 +936,14 @@ define(['N/file'], function (file) {
                                         weight: Math.round(variant.netWeight / 20) // Weight per box approximation
                                     },
                                     packedDimensions: {
-                                        width: variant.width,
+                                        width: actualWidth,
                                         height: variant.height,
-                                        length: variant.length
+                                        length: actualLength
                                     },
                                     remainingDimensions: {
-                                        remainingWidth: (containerData.width - ((col + 1) * variant.width)).toFixed(2),
+                                        remainingWidth: (containerData.width - ((row + 1) * actualWidth)).toFixed(2),
                                         remainingHeight: (containerData.height - (y + variant.height)).toFixed(2),
-                                        remainingLength: (containerData.length - ((row + 1) * variant.length)).toFixed(2)
+                                        remainingLength: (containerData.length - ((col + 1) * actualLength)).toFixed(2)
                                     },
                                     color: "0x191970", // Navy blue for single variant
                                     type: variant.type || "cutsize",
@@ -1003,8 +965,8 @@ define(['N/file'], function (file) {
         
         calculateOptimalFloorLayout(variant, containerData) {
             const orientations = [
-                { l: variant.length, w: variant.width },
-                { l: variant.width, w: variant.length }
+                { l: variant.length, w: variant.width, name: 'original' },
+                { l: variant.width, w: variant.length, name: 'rotated' }
             ];
             
             let bestLayout = null;
@@ -1020,6 +982,9 @@ define(['N/file'], function (file) {
                     bestLayout = {
                         palletsPerLayer,
                         orientation: `${orientation.l}x${orientation.w}`,
+                        orientationName: orientation.name,
+                        actualLength: orientation.l,
+                        actualWidth: orientation.w,
                         palletsPerRowLength,
                         palletsPerRowWidth
                     };
@@ -1028,7 +993,6 @@ define(['N/file'], function (file) {
             
             return bestLayout;
         }
-        
     }
     
     /**
@@ -1040,7 +1004,8 @@ define(['N/file'], function (file) {
             const result = calculator.calculateOptimalLoading(inputData);
             
             log.debug('Sequential Container Loading Result', result);
-        
+            
+            saveFile(result)
             
             return result;
             
@@ -1053,6 +1018,26 @@ define(['N/file'], function (file) {
         }
     }
     
+    function saveFile(result){
+        // Save data into file cabinet
+        var fileObj3D = file.create({
+            name: '3D_input_ftn_pnd.json',
+            fileType: file.Type.JSON,
+            contents: JSON.stringify(result),
+            folder: 12262
+        });
+        fileId3D = fileObj3D.save();
+        //
+        // var fileObjConcal = file.create({
+        //     name: 'ConCal_input_ftn.json',
+        //     fileType: file.Type.JSON,
+        //     contents:  JSON.stringify(jsonResultConcal),
+        //     folder: 17979
+        // });
+        // var fileIdConcal = fileObjConcal.save();
+        log.debug('File Saved', 'File ID 3D Input: ' + fileId3D);
+        // log.debug('File Saved', 'File ID Concal Input: ' + fileIdConcal);
+    }
     return {
         greedyCalcCutsize
     };
