@@ -209,20 +209,28 @@ define(['N/file'], function (file) {
             let bestSolution = null;
             let minDeviation = Infinity;
             
-            // Strategy 1: Try mixed loading first (if available and reasonable for target)
+            // Strategy 1: Try mixed loading first (prioritize maximum capacity)
             if (mixedCapacity) {
                 const deviation = Math.abs(mixedCapacity.totalNetWeight - targetWeight);
                 const utilizationRatio = mixedCapacity.totalNetWeight / targetWeight;
                 
-                // Use mixed loading if it's reasonable for the target weight
-                if (utilizationRatio >= 0.3 && utilizationRatio <= 2.0 && deviation < minDeviation) {
-                    bestSolution = {
-                        containerIndex: containerIndex,
-                        type: 'mixed',
-                        ...mixedCapacity,
-                        deviation: deviation
-                    };
-                    minDeviation = deviation;
+                // Always consider mixed loading if it's feasible
+                if (utilizationRatio >= 0.05 && utilizationRatio <= 10.0) {
+                    // Capacity bonus: strongly favor higher capacity solutions
+                    const capacityBonus = mixedCapacity.totalNetWeight * 0.1; // 10% of weight as bonus
+                    const adjustedDeviation = deviation - capacityBonus;
+                    
+                    if (adjustedDeviation < minDeviation) {
+                        bestSolution = {
+                            containerIndex: containerIndex,
+                            type: 'mixed',
+                            ...mixedCapacity,
+                            deviation: deviation,
+                            adjustedDeviation: adjustedDeviation,
+                            utilizationRatio: utilizationRatio
+                        };
+                        minDeviation = adjustedDeviation;
+                    }
                 }
             }
             
@@ -241,7 +249,7 @@ define(['N/file'], function (file) {
                     Math.max(1, Math.floor(idealPallets)),
                     Math.max(1, Math.ceil(idealPallets)),
                     Math.max(1, Math.round(idealPallets)),
-                    maxPallets // Add maximum capacity option
+                    maxPallets // Always include maximum capacity option
                 ].filter(p => p > 0 && p <= maxPallets);
                 
                 // Remove duplicates
@@ -250,8 +258,13 @@ define(['N/file'], function (file) {
                 uniquePalletOptions.forEach(pallets => {
                     const actualWeight = pallets * variant.netWeight;
                     const deviation = Math.abs(actualWeight - targetWeight);
+                    const utilizationRatio = actualWeight / targetWeight;
                     
-                    if (deviation < minDeviation) {
+                    // Capacity bonus: favor higher capacity solutions
+                    const capacityBonus = actualWeight * 0.1; // 10% of weight as bonus
+                    const adjustedDeviation = deviation - capacityBonus;
+                    
+                    if (adjustedDeviation < minDeviation) {
                         bestSolution = {
                             containerIndex: containerIndex,
                             type: 'single',
@@ -259,9 +272,11 @@ define(['N/file'], function (file) {
                             pallets: pallets,
                             totalNetWeight: actualWeight,
                             totalGrossWeight: pallets * variant.grossWeight,
-                            deviation: deviation
+                            deviation: deviation,
+                            adjustedDeviation: adjustedDeviation,
+                            utilizationRatio: utilizationRatio
                         };
-                        minDeviation = deviation;
+                        minDeviation = adjustedDeviation;
                     }
                 });
             });
@@ -272,14 +287,22 @@ define(['N/file'], function (file) {
                 
                 partialMixedOptions.forEach(option => {
                     const deviation = Math.abs(option.totalNetWeight - targetWeight);
-                    if (deviation < minDeviation) {
+                    const utilizationRatio = option.totalNetWeight / targetWeight;
+                    
+                    // Capacity bonus for partial mixed loading
+                    const capacityBonus = option.totalNetWeight * 0.1;
+                    const adjustedDeviation = deviation - capacityBonus;
+                    
+                    if (adjustedDeviation < minDeviation) {
                         bestSolution = {
                             containerIndex: containerIndex,
                             type: 'partial_mixed',
                             ...option,
-                            deviation: deviation
+                            deviation: deviation,
+                            adjustedDeviation: adjustedDeviation,
+                            utilizationRatio: utilizationRatio
                         };
-                        minDeviation = deviation;
+                        minDeviation = adjustedDeviation;
                     }
                 });
             }
@@ -579,7 +602,28 @@ define(['N/file'], function (file) {
             
             // Calculate mixed loading capacity for full containers
             const mixedCapacity = this.calculateMixedLoading(containerData, variants);
-            const mixedCapacityPerContainer = mixedCapacity ? mixedCapacity.totalNetWeight : 0;
+            let maxCapacityPerContainer = 0;
+            
+            // If mixed loading available, use it. Otherwise use single variant max capacity
+            if (mixedCapacity) {
+                maxCapacityPerContainer = mixedCapacity.totalNetWeight;
+            } else {
+                // Single variant case - get max capacity of the best variant
+                const variantKeys = Object.keys(variants);
+                let bestSingleCapacity = 0;
+                
+                variantKeys.forEach(variantKey => {
+                    const capacity = this.calculateMaxPalletsPerContainer(containerData, variants[variantKey]);
+                    if (capacity) {
+                        const singleCapacity = capacity.maxPallets * variants[variantKey].netWeight;
+                        if (singleCapacity > bestSingleCapacity) {
+                            bestSingleCapacity = singleCapacity;
+                        }
+                    }
+                });
+                
+                maxCapacityPerContainer = bestSingleCapacity;
+            }
             
             const firstVariant = variants[Object.keys(variants)[0]];
             const currentContainers = solution.containerCount;
@@ -588,10 +632,9 @@ define(['N/file'], function (file) {
             // PRIORITY 1: If we have excess weight, suggest customer to increase order to match optimal solution
             if (solution.totalExcess > 0) {
                 const excessTons = solution.totalExcess / 1000;
-                //   const toleranceDecimal = this.parseTolerancePercent(tolerance);
                 const excessPercent = solution.totalExcess / solution.totalWeight;
-                //log.debug('excessTons', excessTons)
-                // Only suggest if excess is meaningful (> 1% of total weight)
+                
+                // Only suggest if excess is meaningful (> 0.1% of total weight)
                 if (excessPercent > 0.001) {
                     recommendations.option1 = [];
                     recommendations.option1.push({
@@ -601,7 +644,7 @@ define(['N/file'], function (file) {
                         parentID: firstVariant.parentID || firstVariant.internalId,
                         displayName: firstVariant.parentName || firstVariant.displayName.split(" AUTO")[0],
                         suggestedQty: excessTons.toFixed(3),
-                        uom: "ton",
+                        uom: "MT",
                         currentWeight: (currentWeightTons - excessTons).toFixed(3),
                         targetWeight: currentWeightTons.toFixed(3),
                         containers: currentContainers,
@@ -614,28 +657,29 @@ define(['N/file'], function (file) {
             }
             
             // If we have partial containers, offer clear business choices
-            if (currentContainers > 0 && mixedCapacityPerContainer > 0) {
+            if (currentContainers > 0 && maxCapacityPerContainer > 0) {
                 
                 // OPTION 1: Increase to fill all containers optimally (full utilization)
-                const fullContainersWeight = currentContainers * mixedCapacityPerContainer / 1000; // tons
+                const fullContainersWeight = currentContainers * maxCapacityPerContainer / 1000; // tons
                 const increaseNeeded = fullContainersWeight - currentWeightTons;
                 
                 const toleranceDecimal = this.parseTolerancePercent(tolerance);
                 const ratioLack = (fullContainersWeight > 0) ? (increaseNeeded / fullContainersWeight) : 0;
                 
-                if (ratioLack > toleranceDecimal) { // Only suggest if shortage exceeds tolerance
+                if (ratioLack > toleranceDecimal && increaseNeeded > 0.1) { // Only suggest if shortage exceeds tolerance and meaningful amount
                     recommendations.option1 = []
                     recommendations.option1.push({
-                        type: "optimize_full_containers",
+                        type: mixedCapacity ? "optimize_full_containers" : "optimize_single_variant_containers",
                         action: "increase",
                         internalId: firstVariant.internalId,
                         parentID: firstVariant.parentID || firstVariant.internalId,
                         displayName: firstVariant.parentName || firstVariant.displayName.split(" AUTO")[0],
                         suggestedQty: increaseNeeded.toFixed(3),
-                        uom: "ton",
+                        uom: "MT",
                         targetWeight: fullContainersWeight.toFixed(3),
                         containers: currentContainers,
                         utilizationStatus: "FULL",
+                        loadingType: mixedCapacity ? "mixed" : "single_variant",
                         note: `Increase to ${fullContainersWeight.toFixed(3)} tons for optimal ${currentContainers}-container utilization`
                     });
                 }
@@ -656,7 +700,7 @@ define(['N/file'], function (file) {
                         parentID: firstVariant.parentID || firstVariant.internalId,
                         displayName: firstVariant.parentName || firstVariant.displayName.split(" AUTO")[0],
                         suggestedQty: remainingTons.toFixed(3),
-                        uom: "ton",
+                        uom: "MT",
                         note: `Add ${remainingTons.toFixed(3)} tons to complete the order`
                     });
                 }
