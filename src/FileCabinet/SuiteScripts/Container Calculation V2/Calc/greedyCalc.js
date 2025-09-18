@@ -7,6 +7,7 @@ define(['N/file'], function (file) {
      * Container Loading Calculator with Unified Sequential Filling
      * Simplified approach: Always use sequential filling for any number of containers
      * Updated: Assumes all variants have the same pallet type
+     * FIXED: Recommendation logic now uses original order weight
      */
     
     const imgurl = "https://sca.doubleapaper.com/assets/Container_Image/container.png";
@@ -44,7 +45,7 @@ define(['N/file'], function (file) {
                     return { error: "Container data not found in input" };
                 }
                 
-                // Get target weight from the product group (in tons)
+                // Get target weight from the product group (in tons) - STORE ORIGINAL
                 const targetWeightTons = firstProduct.weight || 0;
                 const targetWeightKg = targetWeightTons * 1000; // Convert to kg
                 
@@ -73,8 +74,6 @@ define(['N/file'], function (file) {
                     variants[uniqueKey] = variant;
                 });
                 
-                //  log.debug('variants', variants);
-                
                 // Use sequential filling directly on all variants
                 const solution = this.trySequentialContainers(
                     targetWeightKg,
@@ -83,10 +82,8 @@ define(['N/file'], function (file) {
                     tolerance
                 );
                 
-                // log.debug('solution', solution);
-                
                 if (solution.feasible) {
-                    return this.generateSequentialOutput(solution, containerData, variants, action, tolerance);
+                    return this.generateSequentialOutput(solution, containerData, variants, action, tolerance, targetWeightTons);
                 }
                 
                 // Return error if no solution found
@@ -143,20 +140,11 @@ define(['N/file'], function (file) {
                     
                     // Stop if shortfall is within tolerance (business acceptable)
                     if (shortfallPercent <= toleranceDecimal) {
-                        // log.debug('Shortfall within tolerance, stopping', {
-                        //     remainingWeight: remainingWeight,
-                        //     shortfallPercent: (shortfallPercent * 100).toFixed(2) + '%',
-                        //     tolerance: (toleranceDecimal * 100).toFixed(1) + '%'
-                        // });
                         break;
                     }
                     
                     // Stop if remaining weight is truly negligible (< 1% of total target)
                     if (remainingWeight <= targetWeightKg * 0.01) {
-                        // log.debug('Remaining weight negligible, stopping', {
-                        //     remainingWeight: remainingWeight,
-                        //     percentOfTotal: (remainingWeight / targetWeightKg * 100).toFixed(2) + '%'
-                        // });
                         break;
                     }
                 } else {
@@ -421,9 +409,9 @@ define(['N/file'], function (file) {
         }
         
         /**
-         * Generate output for sequential container solution
+         * Generate output for sequential container solution - FIXED VERSION
          */
-        generateSequentialOutput(results, containerData, variants, action, tolerance) {
+        generateSequentialOutput(results, containerData, variants, action, tolerance, originalTargetWeightTons) {
             const solution = results.solution;
             const containers = [];
             
@@ -479,7 +467,7 @@ define(['N/file'], function (file) {
             return {
                 containers: containers,
                 summary: summary,
-                recommendedItems: this.generateSequentialRecommendations(solution, variants, containerData, tolerance)
+                recommendedItems: this.generateSequentialRecommendations(solution, variants, containerData, tolerance, originalTargetWeightTons)
             };
         }
         
@@ -595,10 +583,11 @@ define(['N/file'], function (file) {
         }
         
         /**
-         * Generate recommendations for sequential solution
+         * Generate recommendations for sequential solution - FIXED VERSION
          */
-        generateSequentialRecommendations(solution, variants, containerData, tolerance) {
+        generateSequentialRecommendations(solution, variants, containerData, tolerance, originalTargetWeightTons) {
             const recommendations = {};
+            log.debug('solution', solution)
             
             // Calculate mixed loading capacity for full containers
             const mixedCapacity = this.calculateMixedLoading(containerData, variants);
@@ -627,60 +616,35 @@ define(['N/file'], function (file) {
             
             const firstVariant = variants[Object.keys(variants)[0]];
             const currentContainers = solution.containerCount;
-            const currentWeightTons = Math.floor(solution.totalWeight) / 1000;
             
-            // PRIORITY 1: If we have excess weight, suggest customer to increase order to match optimal solution
-            if (solution.totalExcess > 0) {
-                const excessTons = solution.totalExcess / 1000;
-                const excessPercent = solution.totalExcess / solution.totalWeight;
-                
-                // Only suggest if excess is meaningful (> 0.1% of total weight)
-                if (excessPercent > 0.001) {
-                    recommendations.option1 = [];
-                    recommendations.option1.push({
-                        type: "match_optimal_loading",
-                        action: "increase",
-                        internalId: firstVariant.internalId,
-                        parentID: firstVariant.parentID || firstVariant.internalId,
-                        displayName: firstVariant.parentName || firstVariant.displayName.split(" AUTO")[0],
-                        suggestedQty: excessTons.toFixed(3),
-                        uom: "MT",
-                        currentWeight: (currentWeightTons - excessTons).toFixed(3),
-                        targetWeight: currentWeightTons.toFixed(3),
-                        containers: currentContainers,
-                        utilizationStatus: "OPTIMAL",
-                        note: `Increase order to ${currentWeightTons.toFixed(3)} tons to match optimal container loading solution`
-                    });
-                    
-                    return recommendations;
-                }
-            }
+            // FIX: Use original target weight passed from main function
+            const originalOrderedWeightTons = originalTargetWeightTons;
             
             // If we have partial containers, offer clear business choices
             if (currentContainers > 0 && maxCapacityPerContainer > 0) {
                 
                 // OPTION 1: Increase to fill all containers optimally (full utilization)
                 const fullContainersWeight = currentContainers * maxCapacityPerContainer / 1000; // tons
-                const increaseNeeded = fullContainersWeight - currentWeightTons;
                 
-                const toleranceDecimal = this.parseTolerancePercent(tolerance);
-                const ratioLack = (fullContainersWeight > 0) ? (increaseNeeded / fullContainersWeight) : 0;
+                // FIX: Calculate increase needed based on original order weight
+                const increaseNeeded = fullContainersWeight - originalOrderedWeightTons;
                 
-                if (ratioLack > toleranceDecimal && increaseNeeded > 0.1) { // Only suggest if shortage exceeds tolerance and meaningful amount
+                
+                if (Math.abs(increaseNeeded)  >= 0.001) {
                     recommendations.option1 = []
                     recommendations.option1.push({
                         type: mixedCapacity ? "optimize_full_containers" : "optimize_single_variant_containers",
-                        action: "increase",
+                        action: increaseNeeded > 0 ? "increase" : "decrease",
                         internalId: firstVariant.internalId,
                         parentID: firstVariant.parentID || firstVariant.internalId,
                         displayName: firstVariant.parentName || firstVariant.displayName.split(" AUTO")[0],
                         suggestedQty: increaseNeeded.toFixed(3),
                         uom: "MT",
+                        currentOrder: originalOrderedWeightTons.toFixed(3), // Show original order
                         targetWeight: fullContainersWeight.toFixed(3),
                         containers: currentContainers,
                         utilizationStatus: "FULL",
-                        loadingType: mixedCapacity ? "mixed" : "single_variant",
-                        note: `Increase to ${fullContainersWeight.toFixed(3)} tons for optimal ${currentContainers}-container utilization`
+                        loadingType: mixedCapacity ? "mixed" : "single_variant"
                     });
                 }
             }
@@ -701,7 +665,8 @@ define(['N/file'], function (file) {
                         displayName: firstVariant.parentName || firstVariant.displayName.split(" AUTO")[0],
                         suggestedQty: remainingTons.toFixed(3),
                         uom: "MT",
-                        note: `Add ${remainingTons.toFixed(3)} tons to complete the order`
+                        currentOrder: originalOrderedWeightTons.toFixed(3),
+                        note: `Thêm ${remainingTons.toFixed(3)} tấn để hoàn thành đơn hàng`
                     });
                 }
             }
