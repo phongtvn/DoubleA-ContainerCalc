@@ -28,7 +28,7 @@ define([
                 
             } catch (error) {
                 log.error('onRequest Error', error);
-                return handleError(context, error.message);
+                return handleError(context, error);
             }
         }
         
@@ -471,6 +471,9 @@ define([
              */
             buildVariantFilters: function(specialConditions) {
                 log.debug('this.customerData', this.customerData)
+                if(!this.pallet )
+                    throw 'Select Pallet first'
+                
                 const filters = [['custitem_infor_pallet_type', 'anyof', this.pallet]];
                 
                 if (!specialConditions.length) return filters;
@@ -676,11 +679,10 @@ define([
                 name: 'Content-Type',
                 value: 'application/json'
             });
-            
-            context.response.write(JSON.stringify({
-                error: true,
-                message: message
-            }));
+            const returnErr = {
+                error: 'Error: ' + message
+            };
+            context.response.write(JSON.stringify(returnErr));
         }
         
         function extractLookupValue(lookupField) {

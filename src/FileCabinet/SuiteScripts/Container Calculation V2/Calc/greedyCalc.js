@@ -962,7 +962,7 @@ define(['N/file'], function (file) {
             
             log.debug('Sequential Container Loading Result', result);
             
-            saveFile(result)
+           // saveFile(result)
             
             return result;
             
