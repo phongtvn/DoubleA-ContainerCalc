@@ -4,15 +4,13 @@
 define(['N/file'], function (file) {
     
     /**
-     * Container Loading Calculator with Unified Sequential Filling
-     * Simplified approach: Always use sequential filling for any number of containers
-     * Updated: Assumes all variants have the same pallet type
-     * FIXED: Recommendation logic now uses original order weight
+     * Container Loading Calculator - OPTIMIZED FOR CLOSEST TO TARGET
+     * Key changes: Prioritize closest to target weight over maximum capacity
+     * Enhanced partial mixed loading for optimal combinations
      */
     
     const imgurl = "https://sca.doubleapaper.com/assets/Container_Image/container.png";
     class ContainerLoadingCalculator {
-        
         
         constructor() {
             // Constructor intentionally empty since container data now comes from input
@@ -117,8 +115,8 @@ define(['N/file'], function (file) {
                 variantCapacities[variantKey] = capacity;
             });
             
-            // Calculate mixed loading capacity once for reuse
-            const mixedCapacity = this.calculateMixedLoading(containerData, variants);
+            // Calculate enhanced mixed loading capacity once for reuse
+            const mixedCapacity = this.calculateEnhancedMixedLoading(containerData, variants);
             
             // Sequential filling loop - continue until truly cannot fill more efficiently
             while (remainingWeight > 0) {
@@ -129,24 +127,41 @@ define(['N/file'], function (file) {
                     mixedCapacity,
                     containerIndex
                 );
-                
+                log.debug('containerResult', containerResult)
+
                 if (containerResult.feasible && containerResult.container.totalNetWeight > 0) {
                     containers.push(containerResult.container);
                     remainingWeight -= containerResult.container.totalNetWeight;
                     containerIndex++;
                     
-                    // Smart stopping logic: Consider both tolerance and efficiency
-                    const shortfallPercent = remainingWeight / targetWeightKg;
                     
-                    // Stop if shortfall is within tolerance (business acceptable)
-                    if (shortfallPercent <= toleranceDecimal) {
+                    const maxSingleContainerWeight = Math.max(
+                        ...Object.keys(variants).map(key => {
+                            const capacity = variantCapacities[key];
+                            return capacity ? capacity.maxPallets * variants[key].netWeight : 0;
+                        }),
+                        mixedCapacity && mixedCapacity.bestCombination ? mixedCapacity.bestCombination.totalNetWeight : 0
+                    );
+
+                    log.debug('maxSingleContainerWeight', maxSingleContainerWeight)
+                    log.debug('remainingWeight', remainingWeight)
+                    if (remainingWeight < maxSingleContainerWeight * toleranceDecimal) {
                         break;
                     }
                     
-                    // Stop if remaining weight is truly negligible (< 1% of total target)
-                    if (remainingWeight <= targetWeightKg * 0.01) {
-                        break;
-                    }
+                    // // Smart stopping logic: Consider both tolerance and efficiency
+                    // const shortfallPercent = remainingWeight / targetWeightKg;
+                    //
+                    // // Stop if shortfall is within tolerance (business acceptable)
+                    // if (shortfallPercent <= toleranceDecimal) {
+                    //     break;
+                    // }
+                    //
+                    // // Stop if remaining weight is truly negligible (< 1% of total target)
+                    // if (remainingWeight <= targetWeightKg * 0.01) {
+                    //     break;
+                    // }
+                    
                 } else {
                     // Cannot fill any more containers efficiently
                     log.debug('Cannot fill additional container', {
@@ -191,35 +206,37 @@ define(['N/file'], function (file) {
         }
         
         /**
-         * Fill a single container optimally for given target weight
+         * Fill a single container optimally for given target weight - OPTIMIZED FOR CLOSEST TO TARGET
          */
         fillSingleContainerOptimal(targetWeight, variants, variantCapacities, mixedCapacity, containerIndex) {
             let bestSolution = null;
             let minDeviation = Infinity;
             
-            // Strategy 1: Try mixed loading first (prioritize maximum capacity)
-            if (mixedCapacity) {
-                const deviation = Math.abs(mixedCapacity.totalNetWeight - targetWeight);
-                const utilizationRatio = mixedCapacity.totalNetWeight / targetWeight;
-                
-                // Always consider mixed loading if it's feasible
-                if (utilizationRatio >= 0.05 && utilizationRatio <= 10.0) {
-                    // Capacity bonus: strongly favor higher capacity solutions
-                    const capacityBonus = mixedCapacity.totalNetWeight * 0.1; // 10% of weight as bonus
-                    const adjustedDeviation = deviation - capacityBonus;
+            // Strategy 1: Try enhanced mixed loading first (now optimized for closest to target)
+            if (mixedCapacity && mixedCapacity.allCombinations) {
+                mixedCapacity.allCombinations.forEach(combination => {
+                    const deviation = Math.abs(combination.totalNetWeight - targetWeight);
+                    const utilizationRatio = combination.totalNetWeight / targetWeight;
                     
-                    if (adjustedDeviation < minDeviation) {
-                        bestSolution = {
-                            containerIndex: containerIndex,
-                            type: 'mixed',
-                            ...mixedCapacity,
-                            deviation: deviation,
-                            adjustedDeviation: adjustedDeviation,
-                            utilizationRatio: utilizationRatio
-                        };
-                        minDeviation = adjustedDeviation;
+                    // Only consider reasonable utilization ratios
+                    if (utilizationRatio >= 0.05 && utilizationRatio <= 5.0) {
+                        // NEW SCORING: Prioritize closest to target
+                        const targetBonus = Math.max(0, 1000 - deviation); // Bonus for being close to target
+                        const adjustedDeviation = deviation - targetBonus;
+                        
+                        if (adjustedDeviation < minDeviation) {
+                            bestSolution = {
+                                containerIndex: containerIndex,
+                                type: 'enhanced_mixed',
+                                ...combination,
+                                deviation: deviation,
+                                adjustedDeviation: adjustedDeviation,
+                                utilizationRatio: utilizationRatio
+                            };
+                            minDeviation = adjustedDeviation;
+                        }
                     }
-                }
+                });
             }
             
             // Strategy 2: Try single variants
@@ -237,7 +254,7 @@ define(['N/file'], function (file) {
                     Math.max(1, Math.floor(idealPallets)),
                     Math.max(1, Math.ceil(idealPallets)),
                     Math.max(1, Math.round(idealPallets)),
-                    maxPallets // Always include maximum capacity option
+                    maxPallets // Include maximum capacity option but don't prioritize it
                 ].filter(p => p > 0 && p <= maxPallets);
                 
                 // Remove duplicates
@@ -248,9 +265,9 @@ define(['N/file'], function (file) {
                     const deviation = Math.abs(actualWeight - targetWeight);
                     const utilizationRatio = actualWeight / targetWeight;
                     
-                    // Capacity bonus: favor higher capacity solutions
-                    const capacityBonus = actualWeight * 0.1; // 10% of weight as bonus
-                    const adjustedDeviation = deviation - capacityBonus;
+                    // NEW SCORING: Prioritize closest to target over capacity
+                    const targetBonus = Math.max(0, 1000 - deviation);
+                    const adjustedDeviation = deviation - targetBonus;
                     
                     if (adjustedDeviation < minDeviation) {
                         bestSolution = {
@@ -269,32 +286,6 @@ define(['N/file'], function (file) {
                 });
             });
             
-            // Strategy 3: Try partial mixed loading (different layer combinations)
-            if (mixedCapacity && Object.keys(variants).length >= 2) {
-                const partialMixedOptions = this.generatePartialMixedForTarget(targetWeight, variants, mixedCapacity);
-                
-                partialMixedOptions.forEach(option => {
-                    const deviation = Math.abs(option.totalNetWeight - targetWeight);
-                    const utilizationRatio = option.totalNetWeight / targetWeight;
-                    
-                    // Capacity bonus for partial mixed loading
-                    const capacityBonus = option.totalNetWeight * 0.1;
-                    const adjustedDeviation = deviation - capacityBonus;
-                    
-                    if (adjustedDeviation < minDeviation) {
-                        bestSolution = {
-                            containerIndex: containerIndex,
-                            type: 'partial_mixed',
-                            ...option,
-                            deviation: deviation,
-                            adjustedDeviation: adjustedDeviation,
-                            utilizationRatio: utilizationRatio
-                        };
-                        minDeviation = adjustedDeviation;
-                    }
-                });
-            }
-            
             return {
                 feasible: bestSolution !== null,
                 container: bestSolution
@@ -302,95 +293,189 @@ define(['N/file'], function (file) {
         }
         
         /**
-         * Generate partial mixed loading options for specific target weight
+         * ENHANCED mixed loading calculation - generates ALL feasible combinations for optimal target matching
          */
-        generatePartialMixedForTarget(targetWeight, variants, mixedCapacity) {
-            const options = [];
+        calculateEnhancedMixedLoading(containerData, variants) {
+            if (!containerData || Object.keys(variants).length < 2) return null;
+            
             const variantKeys = Object.keys(variants);
+            const allCombinations = [];
             
-            if (variantKeys.length < 2 || !mixedCapacity.floorLayout) return options;
+            // Get optimal floor layout with rotation support
+            const bestFloorLayout = this.calculateOptimalFloorLayout(variants[variantKeys[0]], containerData);
+            if (!bestFloorLayout) return null;
             
-            const floorLayout = mixedCapacity.floorLayout;
-            
-            // Try different combinations with conservative layer counts
+            // Generate ALL possible combinations of layers for each variant pair
             for (let i = 0; i < variantKeys.length; i++) {
                 for (let j = i + 1; j < variantKeys.length; j++) {
-                    const variant1 = variants[variantKeys[i]];
-                    const variant2 = variants[variantKeys[j]];
+                    const variant1Key = variantKeys[i];
+                    const variant2Key = variantKeys[j];
+                    const variant1 = variants[variant1Key];
+                    const variant2 = variants[variant2Key];
                     
-                    // Sort by weight (heavier at bottom for stability)
+                    // Sort variants by weight (heavier should go to bottom)
                     const heavierVariant = variant1.grossWeight > variant2.grossWeight ? variant1 : variant2;
                     const lighterVariant = variant1.grossWeight > variant2.grossWeight ? variant2 : variant1;
-                    const heavierKey = variant1.grossWeight > variant2.grossWeight ? variantKeys[i] : variantKeys[j];
-                    const lighterKey = variant1.grossWeight > variant2.grossWeight ? variantKeys[j] : variantKeys[i];
+                    const heavierKey = variant1.grossWeight > variant2.grossWeight ? variant1Key : variant2Key;
+                    const lighterKey = variant1.grossWeight > variant2.grossWeight ? variant2Key : variant1Key;
                     
                     // Calculate max layers for each variant
-                    const maxHeavyLayers = Math.floor(mixedCapacity.totalHeight / heavierVariant.height);
-                    const maxLightLayers = Math.floor(mixedCapacity.totalHeight / lighterVariant.height);
+                    const maxHeavyLayers = Math.floor(containerData.height / heavierVariant.height);
+                    const maxLightLayers = Math.floor(containerData.height / lighterVariant.height);
                     
-                    // Try conservative layer combinations
-                    for (let heavyLayers = 0; heavyLayers <= Math.min(3, maxHeavyLayers); heavyLayers++) {
-                        for (let lightLayers = 0; lightLayers <= Math.min(3, maxLightLayers); lightLayers++) {
+                    // Try ALL combinations, including partial layers
+                    for (let heavyLayers = 0; heavyLayers <= maxHeavyLayers; heavyLayers++) {
+                        for (let lightLayers = 0; lightLayers <= maxLightLayers; lightLayers++) {
                             if (heavyLayers === 0 && lightLayers === 0) continue;
                             
                             const totalHeight = (heavyLayers * heavierVariant.height) + (lightLayers * lighterVariant.height);
-                            if (totalHeight > mixedCapacity.totalHeight) continue;
+                            if (totalHeight > containerData.height) continue;
                             
-                            const totalNetWeight = (heavyLayers * floorLayout.palletsPerLayer * heavierVariant.netWeight) +
-                                (lightLayers * floorLayout.palletsPerLayer * lighterVariant.netWeight);
-                            const totalGrossWeight = (heavyLayers * floorLayout.palletsPerLayer * heavierVariant.grossWeight) +
-                                (lightLayers * floorLayout.palletsPerLayer * lighterVariant.grossWeight);
+                            // Try different pallet counts for partial layers
+                            const heavyPalletOptions = heavyLayers > 0 ? this.generatePalletOptions(bestFloorLayout.palletsPerLayer) : [0];
+                            const lightPalletOptions = lightLayers > 0 ? this.generatePalletOptions(bestFloorLayout.palletsPerLayer) : [0];
                             
-                            // Check weight constraint
-                            if (totalGrossWeight / 1000 > mixedCapacity.totalGrossWeight / 1000) continue;
-                            
-                            // Only include if reasonably close to target (within 20% to 300% of target)
-                            const ratio = totalNetWeight / targetWeight;
-                            if (ratio >= 0.2 && ratio <= 3.0) {
-                                const layers = [];
-                                
-                                if (heavyLayers > 0) {
-                                    layers.push({
-                                        variant: heavierKey,
-                                        layerCount: heavyLayers,
-                                        palletsPerLayer: floorLayout.palletsPerLayer,
-                                        totalPallets: heavyLayers * floorLayout.palletsPerLayer,
-                                        netWeight: heavyLayers * floorLayout.palletsPerLayer * heavierVariant.netWeight,
-                                        grossWeight: heavyLayers * floorLayout.palletsPerLayer * heavierVariant.grossWeight,
-                                        height: heavierVariant.height,
-                                        position: 'bottom'
-                                    });
-                                }
-                                
-                                if (lightLayers > 0) {
-                                    layers.push({
-                                        variant: lighterKey,
-                                        layerCount: lightLayers,
-                                        palletsPerLayer: floorLayout.palletsPerLayer,
-                                        totalPallets: lightLayers * floorLayout.palletsPerLayer,
-                                        netWeight: lightLayers * floorLayout.palletsPerLayer * lighterVariant.netWeight,
-                                        grossWeight: lightLayers * floorLayout.palletsPerLayer * lighterVariant.grossWeight,
-                                        height: lighterVariant.height,
-                                        position: 'top'
-                                    });
-                                }
-                                
-                                options.push({
-                                    type: 'partial_mixed',
-                                    totalPallets: (heavyLayers + lightLayers) * floorLayout.palletsPerLayer,
-                                    totalNetWeight: totalNetWeight,
-                                    totalGrossWeight: totalGrossWeight,
-                                    totalHeight: totalHeight,
-                                    layers: layers,
-                                    floorLayout: floorLayout
+                            heavyPalletOptions.forEach(heavyPalletsPerLayer => {
+                                lightPalletOptions.forEach(lightPalletsPerLayer => {
+                                    if (heavyPalletsPerLayer === 0 && lightPalletsPerLayer === 0) return;
+                                    
+                                    const totalHeavyPallets = heavyLayers * heavyPalletsPerLayer;
+                                    const totalLightPallets = lightLayers * lightPalletsPerLayer;
+                                    const totalPallets = totalHeavyPallets + totalLightPallets;
+                                    
+                                    const totalNetWeight = (totalHeavyPallets * heavierVariant.netWeight) +
+                                        (totalLightPallets * lighterVariant.netWeight);
+                                    const totalGrossWeight = (totalHeavyPallets * heavierVariant.grossWeight) +
+                                        (totalLightPallets * lighterVariant.grossWeight);
+                                    
+                                    // Check weight constraint
+                                    if (totalGrossWeight / 1000 > containerData.maxWeight) return;
+                                    
+                                    // Add to combinations if meaningful
+                                    if (totalNetWeight > 0) {
+                                        const layers = [];
+                                        
+                                        if (totalHeavyPallets > 0) {
+                                            layers.push({
+                                                variant: heavierKey,
+                                                layerCount: heavyLayers,
+                                                palletsPerLayer: heavyPalletsPerLayer,
+                                                totalPallets: totalHeavyPallets,
+                                                netWeight: totalHeavyPallets * heavierVariant.netWeight,
+                                                grossWeight: totalHeavyPallets * heavierVariant.grossWeight,
+                                                height: heavierVariant.height,
+                                                position: 'bottom'
+                                            });
+                                        }
+                                        
+                                        if (totalLightPallets > 0) {
+                                            layers.push({
+                                                variant: lighterKey,
+                                                layerCount: lightLayers,
+                                                palletsPerLayer: lightPalletsPerLayer,
+                                                totalPallets: totalLightPallets,
+                                                netWeight: totalLightPallets * lighterVariant.netWeight,
+                                                grossWeight: totalLightPallets * lighterVariant.grossWeight,
+                                                height: lighterVariant.height,
+                                                position: 'top'
+                                            });
+                                        }
+                                        
+                                        allCombinations.push({
+                                            type: 'enhanced_mixed',
+                                            totalPallets: totalPallets,
+                                            totalNetWeight: Math.round(totalNetWeight),
+                                            totalGrossWeight: totalGrossWeight,
+                                            totalHeight: totalHeight,
+                                            layers: layers,
+                                            floorLayout: bestFloorLayout,
+                                            combinationId: `${heavierKey}:${totalHeavyPallets}-${lighterKey}:${totalLightPallets}`
+                                        });
+                                    }
                                 });
-                            }
+                            });
                         }
                     }
                 }
             }
             
+            // Sort by closest to reasonable target weight ranges instead of maximum weight
+            allCombinations.sort((a, b) => {
+                // Prefer combinations that are likely to be close to common targets
+                const aScore = this.calculateCombinationScore(a.totalNetWeight);
+                const bScore = this.calculateCombinationScore(b.totalNetWeight);
+                return bScore - aScore;
+            });
+            
+            return {
+                type: 'enhanced_mixed',
+                allCombinations: allCombinations,
+                bestCombination: allCombinations.length > 0 ? allCombinations[0] : null
+            };
+        }
+        
+        /**
+         * Generate pallet options for partial layers
+         */
+        generatePalletOptions(maxPalletsPerLayer) {
+            const options = [maxPalletsPerLayer]; // Full layer
+            
+            // Add partial layer options (useful for optimization)
+            for (let pallets = maxPalletsPerLayer - 1; pallets >= 1; pallets--) {
+                options.push(pallets);
+            }
+            
             return options;
+        }
+        
+        /**
+         * Calculate combination score for sorting (prefer reasonable weights over maximum)
+         */
+        calculateCombinationScore(weight) {
+            const weightTons = weight / 1000;
+            
+            // Prefer weights that are commonly targeted (10-20 tons range)
+            if (weightTons >= 10 && weightTons <= 20) {
+                return 1000 + weight; // High priority for realistic targets
+            } else if (weightTons >= 5 && weightTons <= 25) {
+                return 500 + weight; // Medium priority
+            } else {
+                return weight; // Low priority for extreme weights
+            }
+        }
+        
+        /**
+         * Calculate optimal floor layout with rotation support
+         */
+        calculateOptimalFloorLayout(variant, containerData) {
+            const orientations = [
+                { l: variant.length, w: variant.width, name: 'original' },
+                { l: variant.width, w: variant.length, name: 'rotated' }
+            ];
+            
+            let bestLayout = null;
+            let maxPalletsPerLayer = 0;
+            
+            orientations.forEach(orientation => {
+                const palletsPerRowLength = Math.floor(containerData.length / orientation.l);
+                const palletsPerRowWidth = Math.floor(containerData.width / orientation.w);
+                const palletsPerLayer = palletsPerRowLength * palletsPerRowWidth;
+                
+                if (palletsPerLayer > maxPalletsPerLayer) {
+                    maxPalletsPerLayer = palletsPerLayer;
+                    bestLayout = {
+                        palletsPerLayer,
+                        orientation: `${orientation.l}x${orientation.w}`,
+                        orientationName: orientation.name,
+                        actualLength: orientation.l,
+                        actualWidth: orientation.w,
+                        palletsPerRowLength,
+                        palletsPerRowWidth
+                    };
+                }
+            });
+            
+            return bestLayout;
         }
         
         /**
@@ -475,7 +560,7 @@ define(['N/file'], function (file) {
          * Generate output for individual container
          */
         generateSingleContainerOutput(container, containerData, variants, action) {
-            if (container.type === 'mixed' || container.type === 'partial_mixed') {
+            if (container.type === 'enhanced_mixed' || container.type === 'mixed' || container.type === 'partial_mixed') {
                 return this.generateMixedContainerOutput(container, containerData, variants, action);
             } else {
                 return this.generateSingleVariantContainerOutput(container, containerData, variants, action);
@@ -587,15 +672,14 @@ define(['N/file'], function (file) {
          */
         generateSequentialRecommendations(solution, variants, containerData, tolerance, originalTargetWeightTons) {
             const recommendations = {};
-            log.debug('solution', solution)
             
-            // Calculate mixed loading capacity for full containers
-            const mixedCapacity = this.calculateMixedLoading(containerData, variants);
+            // Calculate enhanced mixed loading capacity for full containers
+            const mixedCapacity = this.calculateEnhancedMixedLoading(containerData, variants);
             let maxCapacityPerContainer = 0;
             
-            // If mixed loading available, use it. Otherwise use single variant max capacity
-            if (mixedCapacity) {
-                maxCapacityPerContainer = mixedCapacity.totalNetWeight;
+            // If mixed loading available, use best combination. Otherwise use single variant max capacity
+            if (mixedCapacity && mixedCapacity.bestCombination) {
+                maxCapacityPerContainer = mixedCapacity.bestCombination.totalNetWeight;
             } else {
                 // Single variant case - get max capacity of the best variant
                 const variantKeys = Object.keys(variants);
@@ -625,6 +709,8 @@ define(['N/file'], function (file) {
                 
                 // OPTION 1: Increase to fill all containers optimally (full utilization)
                 const fullContainersWeight = currentContainers * maxCapacityPerContainer / 1000; // tons
+                log.debug('fullContainersWeight', fullContainersWeight)
+                log.debug('originalOrderedWeightTons', originalOrderedWeightTons)
                 
                 // FIX: Calculate increase needed based on original order weight
                 const increaseNeeded = fullContainersWeight - originalOrderedWeightTons;
@@ -633,18 +719,18 @@ define(['N/file'], function (file) {
                 if (Math.abs(increaseNeeded)  >= 0.001) {
                     recommendations.option1 = []
                     recommendations.option1.push({
-                        type: mixedCapacity ? "optimize_full_containers" : "optimize_single_variant_containers",
+                        type: 'dedicated',//mixedCapacity ? "optimize_full_containers" : "optimize_single_variant_containers",
                         action: increaseNeeded > 0 ? "increase" : "decrease",
                         internalId: firstVariant.internalId,
                         parentID: firstVariant.parentID || firstVariant.internalId,
-                        displayName: firstVariant.parentName || firstVariant.displayName.split(" AUTO")[0],
+                        displayName: firstVariant.parentName,// || firstVariant.displayName.split(" AUTO")[0],
                         suggestedQty: increaseNeeded.toFixed(3),
                         uom: "MT",
                         currentOrder: originalOrderedWeightTons.toFixed(3), // Show original order
                         targetWeight: fullContainersWeight.toFixed(3),
                         containers: currentContainers,
-                        utilizationStatus: "FULL",
-                        loadingType: mixedCapacity ? "mixed" : "single_variant"
+                        //utilizationStatus: "OPTIMAL_TARGET_MATCH",
+                        loadingType: mixedCapacity ? "enhanced_mixed" : "single_variant"
                     });
                 }
             }
@@ -724,127 +810,13 @@ define(['N/file'], function (file) {
             };
         }
         
-        calculateMixedLoading(containerData, variants) {
-            if (!containerData || Object.keys(variants).length < 2) return null;
-            
-            const variantKeys = Object.keys(variants);
-            const mixedStrategies = [];
-            
-            // Get optimal floor layout
-            const firstVariant = variants[variantKeys[0]];
-            const orientations = [
-                { l: firstVariant.length, w: firstVariant.width, name: 'original' },
-                { l: firstVariant.width, w: firstVariant.length, name: 'rotated' }
-            ];
-            
-            let bestFloorLayout = null;
-            let maxPalletsPerLayer = 0;
-            
-            orientations.forEach(orientation => {
-                const palletsPerRowLength = Math.floor(containerData.length / orientation.l);
-                const palletsPerRowWidth = Math.floor(containerData.width / orientation.w);
-                const palletsPerLayer = palletsPerRowLength * palletsPerRowWidth;
-                
-                if (palletsPerLayer > maxPalletsPerLayer) {
-                    maxPalletsPerLayer = palletsPerLayer;
-                    bestFloorLayout = {
-                        palletsPerLayer,
-                        orientation: `${orientation.l}x${orientation.w}`,
-                        orientationName: orientation.name,
-                        actualLength: orientation.l,
-                        actualWidth: orientation.w,
-                        palletsPerRowLength: palletsPerRowLength,
-                        palletsPerRowWidth: palletsPerRowWidth
-                    };
-                }
-            });
-            
-            if (!bestFloorLayout) return null;
-            
-            // Generate mixed loading combinations
-            const maxLayersPerVariant = {};
-            variantKeys.forEach(key => {
-                maxLayersPerVariant[key] = Math.floor(containerData.height / variants[key].height);
-            });
-            
-            // Test different combinations of layers
-            for (let i = 0; i < variantKeys.length; i++) {
-                for (let j = i + 1; j < variantKeys.length; j++) {
-                    const variant1Key = variantKeys[i];
-                    const variant2Key = variantKeys[j];
-                    const variant1 = variants[variant1Key];
-                    const variant2 = variants[variant2Key];
-                    
-                    // Sort variants by weight (heavier should go to bottom)
-                    const heavierVariant = variant1.grossWeight > variant2.grossWeight ? variant1 : variant2;
-                    const lighterVariant = variant1.grossWeight > variant2.grossWeight ? variant2 : variant1;
-                    const heavierKey = variant1.grossWeight > variant2.grossWeight ? variant1Key : variant2Key;
-                    const lighterKey = variant1.grossWeight > variant2.grossWeight ? variant2Key : variant1Key;
-                    
-                    // Try different layer distributions
-                    for (let heavyLayers = 1; heavyLayers <= maxLayersPerVariant[heavierKey]; heavyLayers++) {
-                        for (let lightLayers = 1; lightLayers <= maxLayersPerVariant[lighterKey]; lightLayers++) {
-                            const totalHeight = (heavyLayers * heavierVariant.height) + (lightLayers * lighterVariant.height);
-                            
-                            if (totalHeight <= containerData.height) {
-                                const totalPallets = (heavyLayers + lightLayers) * bestFloorLayout.palletsPerLayer;
-                                const totalNetWeight = Math.round((heavyLayers * bestFloorLayout.palletsPerLayer * heavierVariant.netWeight) +
-                                    (lightLayers * bestFloorLayout.palletsPerLayer * lighterVariant.netWeight))
-                                
-                                const totalGrossWeight = (heavyLayers * bestFloorLayout.palletsPerLayer * heavierVariant.grossWeight) +
-                                    (lightLayers * bestFloorLayout.palletsPerLayer * lighterVariant.grossWeight);
-                                
-                                if (totalGrossWeight / 1000 <= containerData.maxWeight) {
-                                    mixedStrategies.push({
-                                        type: 'mixed',
-                                        totalPallets,
-                                        totalNetWeight,
-                                        totalGrossWeight,
-                                        totalHeight,
-                                        layers: [
-                                            {
-                                                variant: heavierKey,
-                                                layerCount: heavyLayers,
-                                                palletsPerLayer: bestFloorLayout.palletsPerLayer,
-                                                totalPallets: heavyLayers * bestFloorLayout.palletsPerLayer,
-                                                netWeight: heavyLayers * bestFloorLayout.palletsPerLayer * heavierVariant.netWeight,
-                                                grossWeight: heavyLayers * bestFloorLayout.palletsPerLayer * heavierVariant.grossWeight,
-                                                height: heavierVariant.height,
-                                                position: 'bottom'
-                                            },
-                                            {
-                                                variant: lighterKey,
-                                                layerCount: lightLayers,
-                                                palletsPerLayer: bestFloorLayout.palletsPerLayer,
-                                                totalPallets: lightLayers * bestFloorLayout.palletsPerLayer,
-                                                netWeight: lightLayers * bestFloorLayout.palletsPerLayer * lighterVariant.netWeight,
-                                                grossWeight: lightLayers * bestFloorLayout.palletsPerLayer * lighterVariant.grossWeight,
-                                                height: lighterVariant.height,
-                                                position: 'top'
-                                            }
-                                        ],
-                                        floorLayout: bestFloorLayout
-                                    });
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-            
-            // Sort by total net weight (descending) to get maximum utilization
-            mixedStrategies.sort((a, b) => b.totalNetWeight - a.totalNetWeight);
-            
-            return mixedStrategies.length > 0 ? mixedStrategies[0] : null;
-        }
-        
         /**
          * Generate 3D coordinates for visualization
          */
         generate3DCoordinates(container, containerData, variants) {
             const coordinates = [];
             
-            if (container.type === 'mixed' || container.type === 'partial_mixed') {
+            if (container.type === 'enhanced_mixed' || container.type === 'mixed' || container.type === 'partial_mixed') {
                 // Mixed loading - multiple variants with layers
                 let currentZ = 0;
                 
@@ -860,8 +832,13 @@ define(['N/file'], function (file) {
                     if (floorLayout) {
                         // Generate coordinates for each layer of this variant
                         for (let layerNum = 0; layerNum < layer.layerCount; layerNum++) {
-                            for (let row = 0; row < floorLayout.palletsPerRowWidth; row++) {
-                                for (let col = 0; col < floorLayout.palletsPerRowLength; col++) {
+                            let palletCount = 0;
+                            
+                            // For partial layers, only place the specified number of pallets
+                            const palletsInThisLayer = layer.palletsPerLayer;
+                            
+                            for (let row = 0; row < floorLayout.palletsPerRowWidth && palletCount < palletsInThisLayer; row++) {
+                                for (let col = 0; col < floorLayout.palletsPerRowLength && palletCount < palletsInThisLayer; col++) {
                                     // Use actual dimensions from floor layout
                                     const actualLength = floorLayout.actualLength;
                                     const actualWidth = floorLayout.actualWidth;
@@ -897,6 +874,8 @@ define(['N/file'], function (file) {
                                         productLayer: variant.layer,
                                         pallet: true
                                     });
+                                    
+                                    palletCount++;
                                 }
                             }
                             currentZ += variant.height;
@@ -971,37 +950,6 @@ define(['N/file'], function (file) {
             
             return coordinates;
         }
-        
-        calculateOptimalFloorLayout(variant, containerData) {
-            const orientations = [
-                { l: variant.length, w: variant.width, name: 'original' },
-                { l: variant.width, w: variant.length, name: 'rotated' }
-            ];
-            
-            let bestLayout = null;
-            let maxPalletsPerLayer = 0;
-            
-            orientations.forEach(orientation => {
-                const palletsPerRowLength = Math.floor(containerData.length / orientation.l);
-                const palletsPerRowWidth = Math.floor(containerData.width / orientation.w);
-                const palletsPerLayer = palletsPerRowLength * palletsPerRowWidth;
-                
-                if (palletsPerLayer > maxPalletsPerLayer) {
-                    maxPalletsPerLayer = palletsPerLayer;
-                    bestLayout = {
-                        palletsPerLayer,
-                        orientation: `${orientation.l}x${orientation.w}`,
-                        orientationName: orientation.name,
-                        actualLength: orientation.l,
-                        actualWidth: orientation.w,
-                        palletsPerRowLength,
-                        palletsPerRowWidth
-                    };
-                }
-            });
-            
-            return bestLayout;
-        }
     }
     
     /**
@@ -1036,16 +984,7 @@ define(['N/file'], function (file) {
             folder: 12262
         });
         fileId3D = fileObj3D.save();
-        //
-        // var fileObjConcal = file.create({
-        //     name: 'ConCal_input_ftn.json',
-        //     fileType: file.Type.JSON,
-        //     contents:  JSON.stringify(jsonResultConcal),
-        //     folder: 17979
-        // });
-        // var fileIdConcal = fileObjConcal.save();
         log.debug('File Saved', 'File ID 3D Input: ' + fileId3D);
-        // log.debug('File Saved', 'File ID Concal Input: ' + fileIdConcal);
     }
     return {
         greedyCalcCutsize

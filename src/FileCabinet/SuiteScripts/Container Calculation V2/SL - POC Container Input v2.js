@@ -24,7 +24,7 @@ define([
                 const processor = new ContainerPackingProcessor(requestData);
                 const result = processor.process();
                 
-                return handleResponse(context, result, requestData.action);
+                return handleResponse(context, result, requestData);
                 
             } catch (error) {
                 log.error('onRequest Error', error);
@@ -152,7 +152,7 @@ define([
                     };
                 }
                 
-                return { customerPallet: [], tolerance: null };
+                return { customerPallet: null, tolerance: null };
             },
             
             /**
@@ -179,7 +179,6 @@ define([
                 if (this.globalContainerData) {
                     payload.containerData = this.globalContainerData;
                 }
-                
                 if (this.globalTolerance) {
                     payload.tolerance = this.globalTolerance;
                 }
@@ -211,6 +210,8 @@ define([
             this.containerId = item.custpage_container.id;
             this.qtyUOM = this.normalizeUOM(item.custpage_quantityuom.text);
             this.quantity = item.custpage_quantity;
+            
+            this.pallet = item.selectedPallet.id;
         }
         
         ItemProcessor.prototype = {
@@ -406,6 +407,7 @@ define([
             processCopyPaper: function(itemData, specialConditions) {
                 const weight = this.quantity // / 100;
                 const itemVariants = this.loadItemVariants(itemData, specialConditions);
+                log.debug('itemVariants', itemVariants)
                 
                 const variants = [];
                 itemVariants.forEach((variant) => {
@@ -433,13 +435,16 @@ define([
                 const filters = this.buildVariantFilters(specialConditions);
                 filters.push('AND', ['parent', 'is', this.itemId]);
                 filters.push('AND', ['custitem_infor_for_sales_country', 'is', this.customerData.shipToCountry]);
-                return this.searchItemData(itemData.itemType, filters);
+                const searchItemData = this.searchItemData(itemData.itemType, filters);
+                log.debug('searchItemData', searchItemData)
+                return searchItemData
             },
             
             /**
              * Search for item data with specified filters
              */
             searchItemData: function(itemType, filters) {
+                log.debug('filters', filters)
                 const itemSearch = search.create({
                     type: itemType,
                     filters: filters,
@@ -465,7 +470,8 @@ define([
              * Build filters for item variants based on special conditions
              */
             buildVariantFilters: function(specialConditions) {
-                const filters = [['custitem_infor_pallet_type', 'anyof', this.customerData.pallet]];
+                log.debug('this.customerData', this.customerData)
+                const filters = [['custitem_infor_pallet_type', 'anyof', this.pallet]];
                 
                 if (!specialConditions.length) return filters;
                 
@@ -600,7 +606,7 @@ define([
         /**
          * Handle successful response
          */
-        function handleResponse(context, result, action) {
+        function handleResponse(context, result, requestData) {
             const SUITELET_3D_URL = 'https://8158655.extforms.netsuite.com/app/site/hosting/scriptlet.nl?script=1693&deploy=1&compid=8158655&ns-at=AAEJ7tMQuDL0qZx_sUKJpUu0z6TuDn2Zx_BpEVeoSzRxzfKidLk';
             
             context.response.setHeader({
@@ -608,10 +614,44 @@ define([
                 value: 'application/json'
             });
             
-            if (action === 'viewContainerList') {
-                log.debug('result viewContainerList', result)
+            if (requestData.action === 'viewContainerList') {
+                //log.debug('result viewContainerList', result)
+                
+                if (requestData.selectedOption && requestData.selectedOption.length > 0) {
+                    
+                    result.selectedOption = requestData.selectedOption;
+                    
+                    if (requestData.selectedStatus === "adjustedQty"){
+                        
+                        // var nonNullCount = 0;
+                        
+                        // for (var key in recommendedBestFitItems) {
+                        //     var arr = recommendedBestFitItems[key];
+                        //     var valid = false;
+                        //
+                        //     for (var i = 0; i < arr.length; i++) {
+                        //
+                        //         if (arr[i] !== null && arr[i] !== undefined) {
+                        //             valid = true;
+                        //             break;
+                        //         }
+                        //     }
+                        //
+                        //     if (valid) {
+                        //         nonNullCount++;
+                        //     }
+                        // }
+                        //
+                        // if (nonNullCount === 0){
+                        //     transformed.adjustedQtyStatus = "overLimit";
+                        // } else {
+                        //     transformed.adjustedQtyStatus = "ok";
+                        // }
+                    }
+                }
+                
                 context.response.write(JSON.stringify(result));
-            } else if (action === 'view3D') {
+            } else if (requestData.action === 'view3D') {
                 const cacheKey = 'key_' + Date.now();
                 const myCache = cache.getCache({ name: 'MySuiteletCache', scope: cache.Scope.PUBLIC });
                 
