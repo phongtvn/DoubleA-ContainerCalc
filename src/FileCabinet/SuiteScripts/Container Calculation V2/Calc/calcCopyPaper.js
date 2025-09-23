@@ -114,9 +114,10 @@ define(['N/file'], function (file) {
                 const capacity = this.calculateMaxPalletsPerContainer(containerData, variants[variantKey]);
                 variantCapacities[variantKey] = capacity;
             });
-            
+            log.debug('variantCapacities', variantCapacities)
             // Calculate enhanced mixed loading capacity once for reuse
             const mixedCapacity = this.calculateEnhancedMixedLoading(containerData, variants);
+            log.debug('mixedCapacity', mixedCapacity)
             
             // Sequential filling loop - continue until truly cannot fill more efficiently
             while (remainingWeight > 0) {
@@ -127,7 +128,7 @@ define(['N/file'], function (file) {
                     mixedCapacity,
                     containerIndex
                 );
-                log.debug('containerResult', containerResult)
+               // log.debug('containerResult', containerResult)
 
                 if (containerResult.feasible && containerResult.container.totalNetWeight > 0) {
                     containers.push(containerResult.container);
@@ -143,8 +144,8 @@ define(['N/file'], function (file) {
                         mixedCapacity && mixedCapacity.bestCombination ? mixedCapacity.bestCombination.totalNetWeight : 0
                     );
 
-                    log.debug('maxSingleContainerWeight', maxSingleContainerWeight)
-                    log.debug('remainingWeight', remainingWeight)
+                    // log.debug('maxSingleContainerWeight', maxSingleContainerWeight)
+                    // log.debug('remainingWeight', remainingWeight)
                     if (remainingWeight < maxSingleContainerWeight * toleranceDecimal) {
                         break;
                     }
@@ -698,6 +699,7 @@ define(['N/file'], function (file) {
                 maxCapacityPerContainer = bestSingleCapacity;
             }
             
+            log.debug('maxCapacityPerContainer', maxCapacityPerContainer)
             const firstVariant = variants[Object.keys(variants)[0]];
             const currentContainers = solution.containerCount;
             
@@ -706,14 +708,69 @@ define(['N/file'], function (file) {
             
             // If we have partial containers, offer clear business choices
             if (currentContainers > 0 && maxCapacityPerContainer > 0) {
+                const capacityTonsPerContainer = maxCapacityPerContainer / 1000; // kg -> tons
+                const orderTons = originalOrderedWeightTons;
                 
+                // Tính số container làm tròn xuống/lên theo bội số capacity
+                const nDown = Math.floor(orderTons / capacityTonsPerContainer);            // có thể = 0 nếu order < capacity
+                const nUp   = Math.max(1, Math.ceil(orderTons / capacityTonsPerContainer)); // tối thiểu 1 cont nếu làm tròn lên
+                
+                const targetDownTons = nDown * capacityTonsPerContainer; // tấn
+                const targetUpTons   = nUp   * capacityTonsPerContainer; // tấn
+                
+                const increaseNeeded = +(targetUpTons - orderTons).toFixed(3);     // tấn cần mua thêm
+                const decreaseNeeded = +(orderTons - targetDownTons).toFixed(3);   // tấn cần giảm
+                
+                const firstVariant = variants[Object.keys(variants)[0]];
+                const loadingType = (mixedCapacity && mixedCapacity.bestCombination) ? "enhanced_mixed" : "single_variant";
+                
+                // OPTION 1: tăng lên bội số kế tiếp (nUp containers)
+                if (increaseNeeded >= 0.001) {
+                    recommendations.option1 = recommendations.option1 || [];
+                    recommendations.option1.push({
+                        type: 'dedicated',
+                        action: 'increase',
+                        internalId: firstVariant.internalId,
+                        parentID: firstVariant.parentID || firstVariant.internalId,
+                        displayName: firstVariant.parentName,
+                        suggestedQty: increaseNeeded.toFixed(3),
+                        uom: 'MT',
+                        currentOrder: orderTons.toFixed(3),
+                        targetWeight: targetUpTons.toFixed(3),
+                        containers: nUp,
+                     //   note: `Tăng lên ${nUp} container (≈ ${targetUpTons.toFixed(3)} tấn)`,
+                        loadingType
+                    });
+                }
+                
+                // OPTION 2: giảm xuống bội số trước đó (nDown containers)
+                // Nếu nDown = 0 -> targetDownTons = 0: tuỳ chính sách kinh doanh, thường KHÔNG gợi ý về 0 container
+                if (nDown >= 1 && decreaseNeeded >= 0.001) {
+                    recommendations.option2 = recommendations.option2 || [];
+                    recommendations.option2.push({
+                        type: 'dedicated',
+                        action: 'decrease',
+                        internalId: firstVariant.internalId,
+                        parentID: firstVariant.parentID || firstVariant.internalId,
+                        displayName: firstVariant.parentName,
+                        suggestedQty: decreaseNeeded.toFixed(3),
+                        uom: 'MT',
+                        currentOrder: orderTons.toFixed(3),
+                        targetWeight: targetDownTons.toFixed(3),
+                        containers: nDown,
+                       // note: `Giảm xuống ${nDown} container (≈ ${targetDownTons.toFixed(3)} tấn)`,
+                        loadingType
+                    });
+                }
+                /*
                 // OPTION 1: Increase to fill all containers optimally (full utilization)
                 const fullContainersWeight = currentContainers * maxCapacityPerContainer / 1000; // tons
-                log.debug('fullContainersWeight', fullContainersWeight)
-                log.debug('originalOrderedWeightTons', originalOrderedWeightTons)
+                // log.debug('fullContainersWeight', fullContainersWeight)
+                // log.debug('originalOrderedWeightTons', originalOrderedWeightTons)
                 
                 // FIX: Calculate increase needed based on original order weight
                 const increaseNeeded = fullContainersWeight - originalOrderedWeightTons;
+                log.debug('increaseNeeded', {increaseNeeded,fullContainersWeight,originalOrderedWeightTons})
                 
                 
                 if (Math.abs(increaseNeeded)  >= 0.001) {
@@ -732,30 +789,31 @@ define(['N/file'], function (file) {
                         //utilizationStatus: "OPTIMAL_TARGET_MATCH",
                         loadingType: mixedCapacity ? "enhanced_mixed" : "single_variant"
                     });
-                }
+                    
+                }*/
             }
+        
             
             // If no meaningful options, provide general optimization suggestions
-            if (!recommendations.option1 || recommendations.option1.length === 0) {
-                
-                // Check if we have remaining weight worth mentioning
-                if (solution.remainingWeight > 0 && solution.remainingWeight > solution.totalWeight * 0.05) {
-                    const remainingTons = solution.remainingWeight / 1000;
-                    
-                    recommendations.option1 = []
-                    recommendations.option1.push({
-                        type: "complete_order",
-                        action: "increase",
-                        internalId: firstVariant.internalId,
-                        parentID: firstVariant.parentID || firstVariant.internalId,
-                        displayName: firstVariant.parentName || firstVariant.displayName.split(" AUTO")[0],
-                        suggestedQty: remainingTons.toFixed(3),
-                        uom: "MT",
-                        currentOrder: originalOrderedWeightTons.toFixed(3),
-                        note: `Thêm ${remainingTons.toFixed(3)} tấn để hoàn thành đơn hàng`
-                    });
-                }
-            }
+            // if (!recommendations.option1 || recommendations.option1.length === 0) {
+            //
+            //     // Check if we have remaining weight worth mentioning
+            //     if (solution.remainingWeight > 0 && solution.remainingWeight > solution.totalWeight * 0.05) {
+            //         const remainingTons = solution.remainingWeight / 1000;
+            //
+            //         recommendations.option1 = []
+            //         recommendations.option1.push({
+            //             type: "complete_order",
+            //             action: "increase",
+            //             internalId: firstVariant.internalId,
+            //             parentID: firstVariant.parentID || firstVariant.internalId,
+            //             displayName: firstVariant.parentName || firstVariant.displayName.split(" AUTO")[0],
+            //             suggestedQty: remainingTons.toFixed(3),
+            //             uom: "MT",
+            //             currentOrder: originalOrderedWeightTons.toFixed(3)
+            //         });
+            //     }
+            // }
             
             return recommendations;
         }
@@ -779,7 +837,8 @@ define(['N/file'], function (file) {
             
             let maxPallets = 0;
             let bestConfig = null;
-            
+            log.debug('containerData', containerData)
+            log.debug('variant', variant)
             orientations.forEach(orientation => {
                 const palletsPerRowLength = Math.floor(containerData.length / orientation.l);
                 const palletsPerRowWidth = Math.floor(containerData.width / orientation.w);
@@ -803,6 +862,34 @@ define(['N/file'], function (file) {
                     };
                 }
             });
+            
+            // If no configuration passes weight check, calculate by weight constraint
+            if (maxPallets === 0) {
+                const maxPalletsByWeight = Math.floor((containerData.maxWeight * 1000) / variant.grossWeight);
+                
+                // Choose best orientation for floor layout
+                const bestOrientation = orientations.reduce((best, current) => {
+                    const palletsPerLayer = Math.floor(containerData.length / current.l) * Math.floor(containerData.width / current.w);
+                    const bestPalletsPerLayer = Math.floor(containerData.length / best.l) * Math.floor(containerData.width / best.w);
+                    return palletsPerLayer > bestPalletsPerLayer ? current : best;
+                });
+                
+                const palletsPerRowLength = Math.floor(containerData.length / bestOrientation.l);
+                const palletsPerRowWidth = Math.floor(containerData.width / bestOrientation.w);
+                const palletsPerLayer = palletsPerRowLength * palletsPerRowWidth;
+                
+                maxPallets = maxPalletsByWeight;
+                bestConfig = {
+                    palletsPerLayer: palletsPerLayer,
+                    maxLayers: Math.ceil(maxPalletsByWeight / palletsPerLayer),
+                    orientation: `${bestOrientation.l}x${bestOrientation.w}`,
+                    orientationName: bestOrientation.name,
+                    actualLength: bestOrientation.l,
+                    actualWidth: bestOrientation.w,
+                    palletsPerRowLength: palletsPerRowLength,
+                    palletsPerRowWidth: palletsPerRowWidth
+                };
+            }
             
             return {
                 maxPallets: maxPallets,

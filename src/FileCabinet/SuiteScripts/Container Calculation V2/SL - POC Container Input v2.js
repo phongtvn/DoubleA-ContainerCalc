@@ -5,9 +5,9 @@
  */
 
 define([
-        'N/error','N/file','N/record','N/runtime','N/search','N/cache','./Calc/greedyCalc'],
+        'N/error','N/file','N/record','N/runtime','N/search','N/cache','./Calc/calcCopyPaper'],
     
-    function(error, file, record, runtime, search, cache, calc) {
+    function(error, file, record, runtime, search, cache, calcCopyPaper) {
         //todo: cover shipt to country on the item
         /**
          * Main Suitelet Entry Point
@@ -159,7 +159,7 @@ define([
              * Process individual item
              */
             processItem: function(item, index, customerData) {
-                const itemProcessor = new ItemProcessor(item, customerData, this.containers);
+                const itemProcessor = new ItemProcessor(item, customerData, this.containers, this.itemType);
                 itemProcessor.process();
             },
             
@@ -192,15 +192,15 @@ define([
             calculateResults: function() {
                 const payload = this.buildPayload();
                 log.debug('Processing payload', JSON.stringify(payload, null, 2));
-                return calc.greedyCalcCutsize(payload);
+                if(!isEmpty(payload.boxesCutsize))
+                    return calcCopyPaper.greedyCalcCutsize(payload);
               
             }
         };
-        
         /**
          * Individual Item Processor
          */
-        function ItemProcessor(item, customerData, containers) {
+        function ItemProcessor(item, customerData, containers, itemType) {
             this.item = item;
             this.customerData = customerData;
             this.containers = containers;
@@ -210,8 +210,11 @@ define([
             this.containerId = item.custpage_container.id;
             this.qtyUOM = this.normalizeUOM(item.custpage_quantityuom.text);
             this.quantity = item.custpage_quantity;
-            
-            this.pallet = item.selectedPallet.id;
+            this.itemType = itemType
+            log.debug('this.customerData', customerData)
+            this.pallet = customerData.pallet;
+            if(item.selectedPallet)
+                this.pallet = item.selectedPallet.id;
         }
         
         ItemProcessor.prototype = {
@@ -221,13 +224,13 @@ define([
             process: function() {
                 const itemData = this.loadItemData();
                 const specialConditions = this.loadSpecialConditions(itemData);
-                
-                if (this.isCopyPaper(itemData.productTypeName)) {
-                    this.processCopyPaper(itemData, specialConditions);
-                } else {
-                    // Handle other product types
-                    this.processOtherProductType(itemData, specialConditions);
-                }
+                log.debug('specialConditions', specialConditions)
+                // if (this.isCopyPaper(itemData.productTypeName)) {
+                this.getItemData(itemData, specialConditions);
+                // } else {
+                //     // Handle other product types
+                //     this.processOtherProductType(itemData, specialConditions);
+                // }
             },
             
             /**
@@ -404,14 +407,14 @@ define([
             /**
              * Process copy paper items
              */
-            processCopyPaper: function(itemData, specialConditions) {
+            getItemData: function(itemData, specialConditions) {
                 const weight = this.quantity // / 100;
                 const itemVariants = this.loadItemVariants(itemData, specialConditions);
                 log.debug('itemVariants', itemVariants)
                 
                 const variants = [];
                 itemVariants.forEach((variant) => {
-                    const processedItem = this.buildCutsizeItem(
+                    const processedItem = this.buildItem(
                         variant,
                         itemData,
                         weight
@@ -419,7 +422,7 @@ define([
                     variants.push(processedItem);
                 });
                 
-                const parentKey = `${itemData.displayName} - ${weight}${this.qtyUOM}`;
+                const parentKey = `${itemData.displayName}`; // - ${weight}${this.qtyUOM}`;
                 
                 // Store in the new format with weight and variants
                 this.containers.boxesCutsize[parentKey] = {
@@ -436,7 +439,7 @@ define([
                 filters.push('AND', ['parent', 'is', this.itemId]);
                 filters.push('AND', ['custitem_infor_for_sales_country', 'is', this.customerData.shipToCountry]);
                 const searchItemData = this.searchItemData(itemData.itemType, filters);
-                log.debug('searchItemData', searchItemData)
+            //    log.debug('searchItemData', searchItemData)
                 return searchItemData
             },
             
@@ -444,7 +447,7 @@ define([
              * Search for item data with specified filters
              */
             searchItemData: function(itemType, filters) {
-                log.debug('filters', filters)
+               // log.debug('filters', filters)
                 const itemSearch = search.create({
                     type: itemType,
                     filters: filters,
@@ -470,12 +473,12 @@ define([
              * Build filters for item variants based on special conditions
              */
             buildVariantFilters: function(specialConditions) {
-                log.debug('this.customerData', this.customerData)
+             //   log.debug('this.customerData', this.customerData)
                 if(!this.pallet )
                     throw 'Select Pallet first'
                 
                 const filters = [['custitem_infor_pallet_type', 'anyof', this.pallet]];
-                
+                log.debug('specialConditions', specialConditions)
                 if (!specialConditions.length) return filters;
                 
                 const aggregatedCriteria = this.aggregateSpecialConditions(specialConditions);
@@ -507,7 +510,12 @@ define([
                     sc.scScaitemsubtype?.forEach(subtype => sets.subtype.add(subtype));
                     if (sc.scGram) sets.gram.add(sc.scGram);
                 });
-                
+                log.debug('FILTER', {
+                    'custitem_infor_layer': Array.from(sets.layer),
+                    'custitem_infor_paper_size': Array.from(sets.paperSize),
+                    'custitem_infor_sca_itemsubtype': Array.from(sets.subtype),
+                    'cseg_item_gram': Array.from(sets.gram)
+                })
                 return {
                     'custitem_infor_layer': Array.from(sets.layer),
                     'custitem_infor_paper_size': Array.from(sets.paperSize),
@@ -519,12 +527,11 @@ define([
             /**
              * Build cutsize item data structure
              */
-            buildCutsizeItem: function(variant, itemData, weight) {
+            buildItem: function(variant, itemData, weight) {
                 const uomRates = this.getUOMConversionRates(variant);
                 
                 return {
-                    documentNo: 'A0108224Z',
-                    type: 'cutsize',
+                    type: this.itemType,
                     parentID: this.itemId,
                     parentName: itemData.displayName,
                     unitstype: variant.getText({ name: 'unitstype' }),
@@ -692,6 +699,9 @@ define([
             return lookupField || null;
         }
         
+        function isEmpty(obj) {
+            return Object.keys(obj).length === 0;
+        }
         return {
             onRequest: onRequest
         };
