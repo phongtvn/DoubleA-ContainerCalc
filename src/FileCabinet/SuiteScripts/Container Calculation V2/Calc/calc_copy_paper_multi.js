@@ -99,14 +99,10 @@ define([], function () {
                     for (let i = 0; i < candidates.length; i++) {
                         const c = candidates[i];
                         if (remain[c.productKey] <= 1e-9) continue;
-                        // if (c.wMT - 1e-9 > weightLeft) continue;
-                        const wCons = palletGrossMTForKey(c.variantKey, metaByKey);
-                        if (wCons - 1e-9 > weightLeft) continue;
-                        
+                        if (c.wMT - 1e-9 > weightLeft) continue;
                         placed.push({ productKey: c.productKey, variantKey: c.variantKey, wMT: c.wMT });
                         slotsLeft--;
-                      //  weightLeft = round6(weightLeft - c.wMT);
-                        weightLeft = round6(weightLeft - wCons);
+                        weightLeft = round6(weightLeft - c.wMT);
                         remain[c.productKey] = Math.max(0, round6(remain[c.productKey] - c.wMT));
                         placedSomething = true;
                         if (slotsLeft <= 0 || weightLeft <= 1e-9) break;
@@ -249,18 +245,13 @@ define([], function () {
     
     
     function containerMetricsFromPlaced(placed, metaByKey) {
-        let pallets = placed.length, net = 0, gross = 0;
+        let pallets = placed.length;
+        let net = 0;
         for (const p of placed) {
-            const m = metaByKey[p.variantKey] || {};
-            const netW = p.wMT || (m.wMT || 0);
-            const grossW = palletGrossMTForKey(p.variantKey, metaByKey);
-            net += netW; gross += grossW;
+            const m = metaByKey[p.variantKey];
+            net += (p.wMT || (m?.wMT || 0));
         }
-        return {
-            pallets,
-            netMT: +(Math.round(net * 1e6) / 1e6),
-            grossMT: +(Math.round(gross * 1e6) / 1e6)
-        };
+        return { pallets, netMT: +(Math.round(net * 1e6) / 1e6) };
     }
     
     // ====================== 3D (contiguous by variant, colored) =====================
@@ -639,13 +630,10 @@ define([], function () {
             for (let i = 0; i < light.length; i++) {
                 const c = light[i];
                 if (remain[c.productKey] <= 1e-9) continue;
-             //   if (c.wMT - 1e-9 > weightLeft) continue;
-                const wCons = palletGrossMTForKey(c.variantKey, metaByKey);
-                if (wCons - 1e-9 > weightLeft) continue;
+                if (c.wMT - 1e-9 > weightLeft) continue;
                 placed.push({ productKey: c.productKey, variantKey: c.variantKey, wMT: c.wMT });
                 slotsLeft--;
-              // weightLeft = round6(weightLeft - c.wMT);
-                weightLeft = round6(weightLeft - wCons);
+                weightLeft = round6(weightLeft - c.wMT);
                 remain[c.productKey] = Math.max(0, round6(remain[c.productKey] - c.wMT));
                 did = true;
                 if (slotsLeft <= 0 || weightLeft <= 1e-9) break;
@@ -687,9 +675,7 @@ define([], function () {
             for (let i = 0; i < candidates.length; i++) {
                 const c = candidates[i];
                 if (remain[c.productKey] <= 1e-9) continue;
-              //  if (c.wMT - 1e-9 > weightLeft) continue;
-                const wCons = palletGrossMTForKey(c.variantKey, metaByKey);
-                if (wCons - 1e-9 > weightLeft) continue;
+                if (c.wMT - 1e-9 > weightLeft) continue;
                 
                 const meta = metaByKey[c.variantKey] || {};
                 const h = +meta.height || 0;
@@ -699,8 +685,7 @@ define([], function () {
                 columns[colIdx].hLeft = round6(columns[colIdx].hLeft - h);
                 columns[colIdx].count += 1;
                 placed.push({ productKey: c.productKey, variantKey: c.variantKey, wMT: c.wMT });
-              //  weightLeft = round6(weightLeft - c.wMT);
-                weightLeft = round6(weightLeft - wCons);
+                weightLeft = round6(weightLeft - c.wMT);
                 remain[c.productKey] = Math.max(0, round6(remain[c.productKey] - c.wMT));
                 placedSomething = true;
                 break;
@@ -957,13 +942,6 @@ define([], function () {
     }
     
     // ============================== DEFAULTS & UTILS ===============================
-    function palletGrossMTForKey(variantKey, metaByKey) {
-        const m = metaByKey[variantKey] || {};
-        if (typeof m.grossWeightPerPalletMT === 'number') return m.grossWeightPerPalletMT;
-        if (typeof m.grossWeightPerPallet === 'number') return m.grossWeightPerPallet / 1000;
-        // fallback an toàn: nếu thiếu gross, dùng net
-        return m.wMT || 0;
-    }
     
     //xác định pallet nhỏ nhất còn khả dụng
     function minPalletWeightRemaining(remain, products) {
