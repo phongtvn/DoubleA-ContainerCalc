@@ -837,8 +837,8 @@ define(['N/file'], function (file) {
             
             let maxPallets = 0;
             let bestConfig = null;
-            log.debug('containerData', containerData)
-            log.debug('variant', variant)
+            // log.debug('containerData', containerData)
+            // log.debug('variant', variant)
             orientations.forEach(orientation => {
                 const palletsPerRowLength = Math.floor(containerData.length / orientation.l);
                 const palletsPerRowWidth = Math.floor(containerData.width / orientation.w);
