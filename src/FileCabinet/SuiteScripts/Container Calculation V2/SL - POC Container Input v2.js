@@ -4,11 +4,10 @@
  * @NModuleScope Public
  */
 
-define([
-        'N/error','N/file','N/record','N/runtime','N/search','N/cache','./Calc/calcCopyPaper'],
+define(['N/record','N/search','N/cache','./Calc/calc_copy_paper.js', './Calc/calc_copy_paper_multi.js'], //, './Calc/calc_roll.js', './Calc/calc_roll_multi.js'],
     
-    function(error, file, record, runtime, search, cache, calcCopyPaper) {
-        //todo: cover shipt to country on the item
+    function(record, search, cache, calc_copy_paper, calc_copy_paper_multi) { //, calc_roll, calc_roll_multi) {
+        
         /**
          * Main Suitelet Entry Point
          * Handles container packing calculations for paper products
@@ -188,15 +187,87 @@ define([
             
             /**
              * Calculate final results using external algorithm
+             * Enhanced to handle different product types and quantities
              */
             calculateResults: function() {
                 const payload = this.buildPayload();
                 log.debug('Processing payload', JSON.stringify(payload, null, 2));
-                if(!isEmpty(payload.boxesCutsize))
-                    return calcCopyPaper.greedyCalcCutsize(payload);
-              
+                
+                // Get active box types (non-empty containers)
+                const activeBoxTypes = this.getActiveBoxTypes(payload);
+                //log.debug('Active box types', activeBoxTypes);
+                
+                // If no active boxes, return payload as is
+                if (activeBoxTypes.length === 0) {
+                    log.debug('No active boxes found');
+                    return payload;
+                }
+                
+                // If multiple box types are active, handle mixed scenario
+                if (activeBoxTypes.length > 1) {
+                    log.debug('Multiple box types detected, using mixed calculation');
+                    // TODO: Implement mixed calculation logic if needed
+                    return payload;
+                }
+                
+                const activeBoxType = activeBoxTypes[0];
+                const productCount = this.getProductCount(payload, activeBoxType);
+               // log.debug(`${activeBoxType} has ${productCount} products`);
+                
+                // Route to appropriate calculation function
+                switch (activeBoxType) {
+                    case 'boxesCutsize':
+                        if (productCount === 1) {
+                            log.debug('Calling calc_copy_paper.greedyCalcCutsize for single product');
+                       //     return calc_copy_paper.greedyCalcCutsize(payload);
+                            return calc_copy_paper_multi.greedyCalcCutsize(payload);
+                        } else {
+                            log.debug('Calling calc_copy_paper_multi.greedyCalcCutsize for multiple products');
+                            return calc_copy_paper_multi.greedyCalcCutsize(payload);
+                        }
+                    
+                    // case 'boxesCMRoll':
+                    //     if (productCount === 1) {
+                    //         log.debug('Calling calc_roll.greedyCalcCutsize for single product');
+                    //         return calc_roll.greedyCalcCutsize(payload);
+                    //     } else {
+                    //         log.debug('Calling calc_roll_multi.greedyCalcCutsize for multiple products');
+                    //         return calc_roll_multi.greedyCalcCutsize(payload);
+                    //     }
+                    
+                    default:
+                        log.debug(`No calculation function defined for ${activeBoxType}, returning original payload`);
+                        return payload;
+                }
+            },
+            
+            /**
+             * Get list of active box types (non-empty containers)
+             */
+            getActiveBoxTypes: function(payload) {
+                const boxTypes = [
+                    'boxesCutsize', 'boxesFolio', 'boxesRoll', 'boxesCMSheet',
+                    'boxesCMRoll', 'boxesHoneycomb', 'boxesPulp', 'boxesBoxCover',
+                    'boxesWrapper', 'boxesDAOS', 'boxesDAN', 'boxesDACP', 'boxesMixed'
+                ];
+                
+                return boxTypes.filter(boxType => !isEmpty(payload[boxType]));
+            },
+            
+            /**
+             * Get count of products in a specific box type
+             */
+            getProductCount: function(payload, boxType) {
+                const boxData = payload[boxType];
+                if (!boxData || isEmpty(boxData)) {
+                    return 0;
+                }
+                
+                // Count the number of products (keys) in the box
+                return Object.keys(boxData).length;
             }
         };
+        
         /**
          * Individual Item Processor
          */
@@ -410,7 +481,7 @@ define([
             getItemData: function(itemData, specialConditions) {
                 const weight = this.quantity // / 100;
                 const itemVariants = this.loadItemVariants(itemData, specialConditions);
-                log.debug('itemVariants', itemVariants)
+                //   log.debug('itemVariants', itemVariants)
                 
                 const variants = [];
                 itemVariants.forEach((variant) => {
@@ -439,7 +510,7 @@ define([
                 filters.push('AND', ['parent', 'is', this.itemId]);
                 filters.push('AND', ['custitem_infor_for_sales_country', 'is', this.customerData.shipToCountry]);
                 const searchItemData = this.searchItemData(itemData.itemType, filters);
-            //    log.debug('searchItemData', searchItemData)
+                   log.debug('searchItemData', searchItemData)
                 return searchItemData
             },
             
@@ -447,7 +518,7 @@ define([
              * Search for item data with specified filters
              */
             searchItemData: function(itemType, filters) {
-               // log.debug('filters', filters)
+                log.debug('filters', filters)
                 const itemSearch = search.create({
                     type: itemType,
                     filters: filters,
@@ -473,12 +544,12 @@ define([
              * Build filters for item variants based on special conditions
              */
             buildVariantFilters: function(specialConditions) {
-             //   log.debug('this.customerData', this.customerData)
+                //   log.debug('this.customerData', this.customerData)
                 if(!this.pallet )
                     throw 'Select Pallet first'
                 
                 const filters = [['custitem_infor_pallet_type', 'anyof', this.pallet]];
-                log.debug('specialConditions', specialConditions)
+                // log.debug('specialConditions', specialConditions)
                 if (!specialConditions.length) return filters;
                 
                 const aggregatedCriteria = this.aggregateSpecialConditions(specialConditions);
@@ -510,12 +581,12 @@ define([
                     sc.scScaitemsubtype?.forEach(subtype => sets.subtype.add(subtype));
                     if (sc.scGram) sets.gram.add(sc.scGram);
                 });
-                log.debug('FILTER', {
-                    'custitem_infor_layer': Array.from(sets.layer),
-                    'custitem_infor_paper_size': Array.from(sets.paperSize),
-                    'custitem_infor_sca_itemsubtype': Array.from(sets.subtype),
-                    'cseg_item_gram': Array.from(sets.gram)
-                })
+                // log.debug('FILTER', {
+                //     'custitem_infor_layer': Array.from(sets.layer),
+                //     'custitem_infor_paper_size': Array.from(sets.paperSize),
+                //     'custitem_infor_sca_itemsubtype': Array.from(sets.subtype),
+                //     'cseg_item_gram': Array.from(sets.gram)
+                // })
                 return {
                     'custitem_infor_layer': Array.from(sets.layer),
                     'custitem_infor_paper_size': Array.from(sets.paperSize),
