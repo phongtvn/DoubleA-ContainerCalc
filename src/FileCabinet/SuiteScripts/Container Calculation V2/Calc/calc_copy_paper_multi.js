@@ -103,7 +103,11 @@ define([], function () {
                         placed.push({ productKey: c.productKey, variantKey: c.variantKey, wMT: c.wMT });
                         slotsLeft--;
                         weightLeft = round6(weightLeft - c.wMT);
-                        remain[c.productKey] = Math.max(0, round6(remain[c.productKey] - c.wMT));
+                        
+                        const m = variantMetaByKey[c.variantKey] || {};
+                        const netW = +m.netWeightPerPalletMT || 0;
+                        remain[c.productKey] = Math.max(0, round6(remain[c.productKey] - netW));
+                        
                         placedSomething = true;
                         if (slotsLeft <= 0 || weightLeft <= 1e-9) break;
                     }
@@ -156,7 +160,7 @@ define([], function () {
         }
         
         // Recommendations
-      //  const recommendedItems = buildRecommendations(containers, variantMetaByKey, inputData.boxesCutsize || {}, container, S, L);
+        
         const recommendedItems = buildRecommendations(containers, variantMetaByKey, inputData.boxesCutsize || {}, container, S, L, config);
         containers.forEach(cont =>{
             delete cont.__placedRaw
@@ -466,7 +470,7 @@ define([], function () {
             const key = p.productKey + '::' + p.variantKey;
             if (!grouped[key]) grouped[key] = { pallets: 0, netMT: 0, productKey: p.productKey, variantKey: p.variantKey };
             grouped[key].pallets += 1;
-            grouped[key].netMT = round6(grouped[key].netMT + p.wMT);
+         //   grouped[key].netMT = round6(grouped[key].netMT + p.wMT);
         }
         
         const items = [];
@@ -477,15 +481,15 @@ define([], function () {
             const meta = metaByKey[g.variantKey] || {};
             const reamsPerPallet = toInt(meta.reamsPerPallet || 0);
             const boxesPerPallet = toInt(meta.boxesPerPallet || 0);
-            const grossPerPalMT = isNum(meta.grossWeightPerPalletMT) ? +meta.grossWeightPerPalletMT : (meta.wMT || 0);
+          //  const grossPerPalMT = isNum(meta.grossWeightPerPalletMT) ? +meta.grossWeightPerPalletMT : (meta.wMT || 0);
             const pricePerPallet = isNum(meta.pricePerPallet) ? +meta.pricePerPallet : 0;
             
             const pallets = g.pallets;
             const reams = pallets * reamsPerPallet;
             const boxes = pallets * boxesPerPallet;
-            const netMT = round6(g.netMT);
-            const grossMT = round6(pallets * grossPerPalMT);
-            
+            const netMT = round6(g.pallets * (meta.netWeightPerPalletMT || 0));   // net thật
+            const grossMT = round6(g.pallets * (meta.grossWeightPerPalletMT || 0));   // net thật
+           
             totalReams += reams;
             totalBoxes += boxes;
             totalPallets += pallets;
@@ -543,16 +547,16 @@ define([], function () {
                 assert(isNum(v.netWeightPerPallet), `Variant missing netWeightPerPallet (${key})`);
                 
                 const variantKey = v.internalId ? String(v.internalId) : (v.displayName || JSON.stringify(v));
-                const wMT = toMT_fromPerPallet(v, config);
+               
+                
+                const wMT_Gross = toMT_fromPerPallet_Gross(v, config); // cho constraint
+                const wMT_Net = toMT_fromPerPallet_Net(v, config);      // cho display
+                
                 
                 const derived = deriveCountsFromUOM(v.uomConversionRates);
                 const reamsPerPallet = isNum(v.reamsPerPallet) ? +v.reamsPerPallet : derived.reamsPerPallet;
                 const boxesPerPallet = isNum(v.boxesPerPallet) ? +v.boxesPerPallet : derived.boxesPerPallet;
                 
-                let grossPerPalMT = null;
-                if (isNum(v.grossWeightPerPalletMT)) grossPerPalMT = +v.grossWeightPerPalletMT;
-                else if (isNum(v.grossWeightPerPallet)) grossPerPalMT = (+v.grossWeightPerPallet) / 1000.0;
-                else grossPerPalMT = wMT;
                 
                 meta[variantKey] = {
                     variantKey,
@@ -566,13 +570,15 @@ define([], function () {
                     palletType: v.palletType || '',
                     reamsPerPallet,
                     boxesPerPallet,
-                    grossWeightPerPalletMT: grossPerPalMT,
+                    grossWeightPerPalletMT: wMT_Gross,
+                    netWeightPerPalletMT: wMT_Net,
                     pricePerPallet: isNum(v.pricePerPallet) ? +v.pricePerPallet : 0,
-                    wMT,
+                    wMT: wMT_Gross,
+                    wNetMT: wMT_Net,
                     length: +v.length, width: +v.width, height: +v.height
                 };
                 
-                return { productKey: key, variantKey, length: +v.length, width: +v.width, height: +v.height, wMT };
+                return { productKey: key, variantKey, length: +v.length, width: +v.width, height: +v.height, wMT: wMT_Gross };
             });
             
             variants.sort((a, b) => b.wMT - a.wMT);
@@ -614,38 +620,40 @@ define([], function () {
             });
     }
     
-    function polishFillWithLighter(placed, products, remain, slotsLeft, weightLeft) {
+    function polishFillWithLighter(placed, products, remain, slotsLeft, weightLeft, metaByKey) {
         if (slotsLeft <= 0 || weightLeft <= 1e-9) return;
         const light = [];
         for (const p of products) {
             if (remain[p.productKey] <= 1e-9) continue;
             for (const v of p.variants) {
-                light.push({ productKey: p.productKey, variantKey: v.variantKey, wMT: v.wMT });
+                light.push({ productKey: p.productKey, variantKey: v.variantKey, wMT: v.wMT, wNetMT: v.wNetMT });
             }
         }
-        light.sort((a, b) => a.wMT - b.wMT);
+        light.sort((a, b) => a.wMT - b.wMT); // fill theo gross nhẹ trước (ràng buộc tải)
         let did = true;
         while (did && slotsLeft > 0 && weightLeft > 1e-9) {
             did = false;
             for (let i = 0; i < light.length; i++) {
                 const c = light[i];
                 if (remain[c.productKey] <= 1e-9) continue;
-                if (c.wMT - 1e-9 > weightLeft) continue;
-                placed.push({ productKey: c.productKey, variantKey: c.variantKey, wMT: c.wMT });
+                if (c.wMT - 1e-9 > weightLeft) continue; // constraint vẫn theo gross
+                placed.push({ productKey: c.productKey, variantKey: c.variantKey, wMT: c.wMT, wNetMT: c.wNetMT });
                 slotsLeft--;
-                weightLeft = round6(weightLeft - c.wMT);
-                remain[c.productKey] = Math.max(0, round6(remain[c.productKey] - c.wMT));
+                weightLeft = round6(weightLeft - c.wMT); // giảm tải trọng (gross)
+                // *** quan trọng: trừ remain theo NET ***
+                remain[c.productKey] = Math.max(0, round6(remain[c.productKey] - c.wNetMT));
                 did = true;
                 if (slotsLeft <= 0 || weightLeft <= 1e-9) break;
             }
         }
     }
     
-    // ============================== MIXED COLUMN STACKING ===============================
     
+    // ============================== MIXED COLUMN STACKING ===============================
     function packOneContainerByColumns(products, remain, container, S, config, metaByKey) {
+        // Mỗi cột: còn chiều cao (hLeft) và số pallet đã xếp (count)
         const columns = Array.from({ length: S }, () => ({ hLeft: container.height, count: 0 }));
-        let weightLeft = container.maxWeight;
+        let weightLeft = container.maxWeight; // *** GROSS constraint ***
         const placed = [];
         
         function findColumnFor(height) {
@@ -660,46 +668,92 @@ define([], function () {
             return best;
         }
         
-        let candidates = buildCandidates(products, remain);
+        // Build ứng viên từ remain (NET) và meta (lấy cả gross & net)
+        function buildColumnCandidates() {
+            const cands = [];
+            for (const p of products) {
+                if (remain[p.productKey] <= 1e-9) continue; // *** check theo NET còn lại ***
+                for (const v of p.variants) {
+                    const m = metaByKey[v.variantKey];
+                    if (!m) continue;
+                    // Bỏ sớm theo chiều cao (nếu đã strictStackHeightCheck ở ngoài)
+                    if (m.height > container.height + 1e-9) continue;
+                    cands.push({
+                        productKey: p.productKey,
+                        variantKey: v.variantKey,
+                        height: +m.height || 0,
+                        wGross: +m.grossWeightPerPalletMT || 0, // dùng cho tải trọng
+                        wNet:   +m.netWeightPerPalletMT   || 0  // dùng để trừ remain
+                    });
+                }
+            }
+            // Heuristic: ưu tiên pallet nặng (gross) trước để lấp tải trọng tốt hơn,
+            // nếu bằng nhau thì pallet cao trước để tận dụng cột 1-tall (nếu có rule 1 tall/column).
+            return cands.sort((a, b) => (b.wGross - a.wGross) || (b.height - a.height));
+        }
         
+        // Vòng xếp theo cột cho đến khi hết tải trọng, hết chỗ, hoặc hết đơn hàng (NET)
         while (weightLeft > 1e-9) {
-            const totalRemain = sumRemain(remain);
-            const slotsPotential = columns.reduce((s, c) => s + (c.count < (config.maxStacksPerColumn || 2) ? 1 : 0), 0);
-            const t = Math.min(
-                totalRemain / Math.max(1, slotsPotential),
-                container.maxWeight / Math.max(1, slotsPotential)
-            );
-            candidates = scoreAndSortCandidates(candidates, remain, t, config);
+            // Hết NET cần xếp thì dừng
+            let remainTotalNet = 0;
+            for (const k in remain) remainTotalNet += (remain[k] || 0);
+            if (remainTotalNet <= 1e-9) break;
+            
+            const candidates = buildColumnCandidates();
+            if (!candidates.length) break;
             
             let placedSomething = false;
+            
+            // Duyệt ứng viên theo thứ tự ưu tiên
             for (let i = 0; i < candidates.length; i++) {
                 const c = candidates[i];
-                if (remain[c.productKey] <= 1e-9) continue;
-                if (c.wMT - 1e-9 > weightLeft) continue;
+                // Nếu sản phẩm này đã hết NET thì bỏ qua
+                if ((remain[c.productKey] || 0) <= 1e-9) continue;
                 
-                const meta = metaByKey[c.variantKey] || {};
-                const h = +meta.height || 0;
-                const colIdx = findColumnFor(h);
-                if (colIdx === -1) continue;
+                // Check tải trọng GROSS
+                if (c.wGross - 1e-9 > weightLeft) continue;
                 
-                columns[colIdx].hLeft = round6(columns[colIdx].hLeft - h);
+                // Tìm cột phù hợp về chiều cao & số stack
+                const colIdx = findColumnFor(c.height);
+                if (colIdx < 0) continue;
+                
+                // Đặt pallet
+                placed.push({ productKey: c.productKey, variantKey: c.variantKey, wMT: c.wGross });
+                columns[colIdx].hLeft = +(Math.round((columns[colIdx].hLeft - c.height) * 1e6) / 1e6);
                 columns[colIdx].count += 1;
-                placed.push({ productKey: c.productKey, variantKey: c.variantKey, wMT: c.wMT });
-                weightLeft = round6(weightLeft - c.wMT);
-                remain[c.productKey] = Math.max(0, round6(remain[c.productKey] - c.wMT));
+                
+                // Giảm tải trọng GROSS của container
+                weightLeft = +(Math.round((weightLeft - c.wGross) * 1e6) / 1e6);
+                
+                // *** Quan trọng: TRỪ remain THEO NET ***
+                const newRemain = (remain[c.productKey] || 0) - c.wNet;
+                remain[c.productKey] = newRemain > 0 ? +(Math.round(newRemain * 1e6) / 1e6) : 0;
+                
                 placedSomething = true;
-                break;
+                break; // xếp được 1 pallet rồi thì build lại candidates cho vòng kế tiếp
             }
             
             if (!placedSomething) break;
             
-            const minHNeed = minHeightNeededForAny(remain, products, metaByKey);
-            const anyColumnHasSpace = columns.some(col => (col.count < (config.maxStacksPerColumn || 2)) && (col.hLeft + 1e-9 >= minHNeed));
+            // Nếu không còn cột nào có thể nhận thêm pallet theo chiều cao/stack ⇒ dừng
+            let minHNeed = Infinity;
+            for (const p of products) {
+                if ((remain[p.productKey] || 0) <= 1e-9) continue;
+                for (const v of p.variants) {
+                    const m = metaByKey[v.variantKey];
+                    if (!m) continue;
+                    minHNeed = Math.min(minHNeed, +m.height || Infinity);
+                }
+            }
+            const anyColumnHasSpace = columns.some(col =>
+                (col.count < (config.maxStacksPerColumn || 2)) && (col.hLeft + 1e-9 >= minHNeed)
+            );
             if (!anyColumnHasSpace) break;
         }
         
         return placed;
     }
+    
     
     function minHeightNeededForAny(remain, products, metaByKey) {
         let minH = Infinity;
@@ -838,7 +892,7 @@ define([], function () {
     //tính sức chứa 1 container
     function computeTheoreticalContainerCapacity(metaByKey, container, S, L, config) {
         // Danh sách variant
-        const variants = Object.keys(metaByKey).map(k => metaByKey[k]).filter(m => isNum(m.wMT) && isNum(m.height));
+        const variants = Object.keys(metaByKey).map(k => metaByKey[k]).filter(m => isNum(m.wNetMT) && isNum(m.height));
         
         if (config && config.enableMixedStackingColumns) {
             // --- Column stacking ---
@@ -849,7 +903,7 @@ define([], function () {
             
             // đơn chiếc
             for (const a of variants) {
-                if (a.height <= H + 1e-9) bestPerCol = Math.max(bestPerCol, a.wMT);
+                if (a.height <= H + 1e-9) bestPerCol = Math.max(bestPerCol, a.wNetMT);
             }
             // cặp (tối đa 2 pallet/cột, ≤1 tall, tổng cao ≤ H)
             for (let i = 0; i < variants.length; i++) {
@@ -859,7 +913,7 @@ define([], function () {
                     const tallCount = ((a.height >= tallTh - 1e-9) ? 1 : 0) + ((b.height >= tallTh - 1e-9) ? 1 : 0);
                     const hSum = (+a.height) + (+b.height);
                     if (tallCount <= 1 && hSum <= H + 1e-9) {
-                        bestPerCol = Math.max(bestPerCol, (+a.wMT) + (+b.wMT));
+                        bestPerCol = Math.max(bestPerCol, (+a.wNetMT) + (+b.wNetMT));
                     }
                 }
             }
@@ -918,17 +972,21 @@ define([], function () {
         // Mỗi cột tối đa 1 tall ⇒ tổng tall ≤ số cột S
         assert(tallCount <= S, `Column stacking violation: tall pallets=${tallCount} > columns=${S}.`);
     }
-    function toMT_fromPerPallet(v, cfg) {
+    function toMT_fromPerPallet_Net(v, cfg) {
+        // Luôn trả net weight
         if (cfg.isKg === true) return (+v.netWeightPerPallet) / 1000;
-        if (v.baseUnitAbbreviation) {
-            const u = String(v.baseUnitAbbreviation).toLowerCase();
-            if (u.includes('kg')) return (+v.netWeightPerPallet) / 1000;
-            if (u.includes('ton') || u.includes('mt')) return (+v.netWeightPerPallet);
-        }
-        const raw = +v.netWeightPerPallet;
-        if (raw >= 100) return raw / 1000;
-        return raw;
+        return (+v.netWeightPerPallet);
     }
+    
+    function toMT_fromPerPallet_Gross(v, cfg) {
+        // Ưu tiên gross, fallback net + pallet weight
+        if (v.grossWeightPerPalletMT) return +v.grossWeightPerPalletMT;
+        if (v.grossWeightPerPallet) return (+v.grossWeightPerPallet) / 1000;
+        
+        const netMT = toMT_fromPerPallet_Net(v, cfg);
+        return netMT + 0.025; // + ước tính pallet weight
+    }
+    
     
     function deriveCountsFromUOM(uom) {
         const out = { reamsPerPallet: 0, boxesPerPallet: 0 };
