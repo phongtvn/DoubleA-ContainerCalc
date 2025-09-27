@@ -108,7 +108,7 @@ define(['N/file'], function (file) {
                 );
                 
                 // >>> thêm dòng gọi nén 3D ngay sau khi vẽ
-                compactVisualGridFinal(contOut, container, variantMetaByKey);
+             //   compactVisualGridFinal(contOut, container, variantMetaByKey);
             }
             
             assert(contOut.item.length > 0, 'Cannot place any pallet in a new container. Check units or constraints.');
@@ -381,19 +381,30 @@ define(['N/file'], function (file) {
         const maxStacks = (config && config.maxStacksPerColumn) ? config.maxStacksPerColumn : 2;
         const cols = Array.from({ length: S }, () => ({ hUsed: 0, stacks: 0, hasTall: false }));
         
+        // function findColumnFor(h) {
+        //     let best = -1, bestSlack = Infinity;
+        //     for (let i = 0; i < S; i++) {
+        //         const c = cols[i];
+        //         if (c.stacks >= maxStacks) continue;
+        //         if (c.hUsed + h > containerData.height + 1e-9) continue;
+        //         if (h >= tallThreshold - 1e-9 && c.hasTall) continue; // mỗi cột chỉ 1 pallet "cao"
+        //         const slack = containerData.height - (c.hUsed + h);
+        //         if (slack < bestSlack) { bestSlack = slack; best = i; }
+        //     }
+        //     return best;
+        // }
+        // chỉ đổi thứ tự lấp cột khi render 3D, không ảnh hưởng số pallet, NET/GROSS, hay các ràng buộc (1 tall/cột, maxStacks…)
+        //sửa hàm chọn cột trong bước 3D sang first-fit (cột hợp lệ đầu tiên)
         function findColumnFor(h) {
-            let best = -1, bestSlack = Infinity;
             for (let i = 0; i < S; i++) {
                 const c = cols[i];
                 if (c.stacks >= maxStacks) continue;
                 if (c.hUsed + h > containerData.height + 1e-9) continue;
-                if (h >= tallThreshold - 1e-9 && c.hasTall) continue; // mỗi cột chỉ 1 pallet "cao"
-                const slack = containerData.height - (c.hUsed + h);
-                if (slack < bestSlack) { bestSlack = slack; best = i; }
+                if (h >= tallThreshold - 1e-9 && c.hasTall) continue; // giữ rule 1 tall/cột
+                return i; // dùng cột hợp lệ đầu tiên -> fill từ (0,0) ra
             }
-            return best;
+            return -1;
         }
-        
         for (let idx = 0; idx < placedRaw.length; idx++) {
             const p = placedRaw[idx];
             const m = metaByKey[p.variantKey] || {};

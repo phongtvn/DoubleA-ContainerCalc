@@ -9,7 +9,8 @@ define(['N/cache', 'N/ui/serverWidget', 'N/file'], function (cache, serverWidget
             if (context.request.method === 'GET') {
                 // สร้างหน้าเพจใหม่
                 var form = serverWidget.createForm({
-                    title: '3D Cube using Three.js with Container Switch (Demo)'
+                    // title: '3D Cube using Three.js with Container Switch (Demo)'
+                    title: '3D Visualization'
                 });
 
                 // HTML field ที่จะฝังโค้ด HTML ของเรา | HTML field to embed our HTML code
@@ -446,7 +447,8 @@ define(['N/cache', 'N/ui/serverWidget', 'N/file'], function (cache, serverWidget
     
                     // สร้างหน้าเพจใหม่
                     var form = serverWidget.createForm({
-                        title: '3D Cube using Three.js with Container Switch (Demo)'
+                       // title: '3D Cube using Three.js with Container Switch (Demo)'
+                        title: '3D Visualization'
                     });
 
                     // HTML field ที่จะฝังโค้ด HTML ของเรา | HTML field to embed our HTML code

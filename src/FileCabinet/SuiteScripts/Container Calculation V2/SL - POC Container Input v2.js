@@ -669,14 +669,6 @@ define(['N/record','N/search','N/cache','./Calc/calc_copy_paper.js', './Calc/cal
                 return { rates, baseUnitAbbreviation };
             },
             
-            /**
-             * Process other product types (placeholder)
-             */
-            processOtherProductType: function(itemData, specialConditions) {
-                // TODO: Implement processing for other product types
-                // (Folio, Roll, CMSheet, etc.)
-                log.debug('Processing other product type', itemData.productTypeName);
-            }
         };
         
         /**
@@ -695,39 +687,11 @@ define(['N/record','N/search','N/cache','./Calc/calc_copy_paper.js', './Calc/cal
             });
             
             if (requestData.action === 'viewContainerList') {
-                //log.debug('result viewContainerList', result)
                 
                 if (requestData.selectedOption && requestData.selectedOption.length > 0) {
                     
                     result.selectedOption = requestData.selectedOption;
-                    
-                    if (requestData.selectedStatus === "adjustedQty"){
-                        
-                        // var nonNullCount = 0;
-                        
-                        // for (var key in recommendedBestFitItems) {
-                        //     var arr = recommendedBestFitItems[key];
-                        //     var valid = false;
-                        //
-                        //     for (var i = 0; i < arr.length; i++) {
-                        //
-                        //         if (arr[i] !== null && arr[i] !== undefined) {
-                        //             valid = true;
-                        //             break;
-                        //         }
-                        //     }
-                        //
-                        //     if (valid) {
-                        //         nonNullCount++;
-                        //     }
-                        // }
-                        //
-                        // if (nonNullCount === 0){
-                        //     transformed.adjustedQtyStatus = "overLimit";
-                        // } else {
-                        //     transformed.adjustedQtyStatus = "ok";
-                        // }
-                    }
+               
                 }
                 
                 context.response.write(JSON.stringify(result));
@@ -742,8 +706,6 @@ define(['N/record','N/search','N/cache','./Calc/calc_copy_paper.js', './Calc/cal
                 });
                 
                 const redirectUrl = SUITELET_3D_URL + '&key=' + cacheKey;
-              //  log.debug('redirectUrl', redirectUrl)
-                
                 context.response.write(JSON.stringify({ redirectUrl }));
             }
         }
