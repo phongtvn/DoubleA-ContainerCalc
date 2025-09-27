@@ -218,11 +218,11 @@ define(['N/record','N/search','N/cache','./Calc/calc_copy_paper.js', './Calc/cal
                 switch (activeBoxType) {
                     case 'boxesCutsize':
                         if (productCount === 1) {
-                            log.debug('Calling calc_copy_paper.greedyCalcCutsize for single product');
+                       //     log.debug('Calling calc_copy_paper.greedyCalcCutsize for single product');
                        //     return calc_copy_paper.greedyCalcCutsize(payload);
                             return calc_copy_paper_multi.greedyCalcCutsize(payload);
                         } else {
-                            log.debug('Calling calc_copy_paper_multi.greedyCalcCutsize for multiple products');
+                           // log.debug('Calling calc_copy_paper_multi.greedyCalcCutsize for multiple products');
                             return calc_copy_paper_multi.greedyCalcCutsize(payload);
                         }
                     
@@ -282,7 +282,7 @@ define(['N/record','N/search','N/cache','./Calc/calc_copy_paper.js', './Calc/cal
             this.qtyUOM = this.normalizeUOM(item.custpage_quantityuom.text);
             this.quantity = item.custpage_quantity;
             this.itemType = itemType
-            log.debug('this.customerData', customerData)
+            
             this.pallet = customerData.pallet;
             if(item.selectedPallet)
                 this.pallet = item.selectedPallet.id;
@@ -295,7 +295,6 @@ define(['N/record','N/search','N/cache','./Calc/calc_copy_paper.js', './Calc/cal
             process: function() {
                 const itemData = this.loadItemData();
                 const specialConditions = this.loadSpecialConditions(itemData);
-                log.debug('specialConditions', specialConditions)
                 // if (this.isCopyPaper(itemData.productTypeName)) {
                 this.getItemData(itemData, specialConditions);
                 // } else {
@@ -743,7 +742,7 @@ define(['N/record','N/search','N/cache','./Calc/calc_copy_paper.js', './Calc/cal
                 });
                 
                 const redirectUrl = SUITELET_3D_URL + '&key=' + cacheKey;
-                log.debug('redirectUrl', redirectUrl)
+              //  log.debug('redirectUrl', redirectUrl)
                 
                 context.response.write(JSON.stringify({ redirectUrl }));
             }
