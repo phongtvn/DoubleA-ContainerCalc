@@ -1,7 +1,7 @@
 /**
  * @NApiVersion 2.1
  */
-define([], function () {
+define(['N/file'], function (file) {
     
     const imgurl = "https://sca.doubleapaper.com/assets/Container_Image/container.png";
     
@@ -16,7 +16,11 @@ define([], function () {
      */
     function greedyCalcCutsize(inputData) {
         try {
+            
+            saveFile(inputData, 'input')
             const result = calculateOptimalPacking(inputData);
+            
+            saveFile(result, 'result')
             log.debug('Multi-product container packing result', result);
             return result;
         } catch (error) {
@@ -84,37 +88,10 @@ define([], function () {
             
             // === PACK 1 CONTAINER ===
             let placed = [];
-            if (config.enableMixedStackingColumns) {
-                placed = packOneContainerByColumns(products, remain, container, S, config, variantMetaByKey);
-            } else {
-                // Fallback: greedy theo slot & L tầng toàn cục
-                let slotsLeft = effectiveSlots;
-                let weightLeft = container.maxWeight;
-                const totalRemain = sumRemain(remain);
-                const t = Math.min(totalRemain / Math.max(1, slotsLeft), container.maxWeight / Math.max(1, slotsLeft));
-                let candidates = buildCandidates(products, remain);
-                while (slotsLeft > 0 && weightLeft > 1e-9) {
-                    candidates = scoreAndSortCandidates(candidates, remain, t, config);
-                    let placedSomething = false;
-                    for (let i = 0; i < candidates.length; i++) {
-                        const c = candidates[i];
-                        if (remain[c.productKey] <= 1e-9) continue;
-                        if (c.wMT - 1e-9 > weightLeft) continue;
-                        placed.push({ productKey: c.productKey, variantKey: c.variantKey, wMT: c.wMT });
-                        slotsLeft--;
-                        weightLeft = round6(weightLeft - c.wMT);
-                        
-                        const m = variantMetaByKey[c.variantKey] || {};
-                        const netW = +m.netWeightPerPalletMT || 0;
-                        remain[c.productKey] = Math.max(0, round6(remain[c.productKey] - netW));
-                        
-                        placedSomething = true;
-                        if (slotsLeft <= 0 || weightLeft <= 1e-9) break;
-                    }
-                    if (!placedSomething) break;
-                }
-                polishFillWithLighter(placed, products, remain, slotsLeft, weightLeft, variantMetaByKey);
-            }
+            
+            placed = packOneContainerByColumns(products, remain, container, S, config, variantMetaByKey);
+            
+         
             
             // Materialize output
             const contOut = materializeContainerOutput(
@@ -123,42 +100,20 @@ define([], function () {
             // giữ placedRaw cho 3D/recommend/polish/rebalance
             contOut.__placedRaw = placed.slice();
             
-            if (config.enableMixedStackingColumns) {
-                enforceTallPerColumnConstraint(contOut, variantMetaByKey, container, S);
-            }
+            enforceTallPerColumnConstraint(contOut, variantMetaByKey, container, S);
             
-            // 3D (block theo variant, màu theo variant)
-            // if (action === 'view3D') {
-            //     contOut.coordinates3D = generate3DCoordinates(contOut, container, contOut.__placedRaw, variantMetaByKey, S, L);
-            // }
             if (action === 'view3D') {
-                if (config.enableMixedStackingColumns) {
-                    contOut.coordinates3D = generate3DCoordinatesColumnAware(
-                        contOut, container, contOut.__placedRaw, variantMetaByKey, S, config
-                    );
-                } else {
-                    contOut.coordinates3D = generate3DCoordinates(
-                        contOut, container, contOut.__placedRaw, variantMetaByKey, S, L
-                    );
-                }
+                contOut.coordinates3D = generate3DCoordinates(
+                    contOut, container, contOut.__placedRaw, variantMetaByKey, S, config
+                );
+                
+                // >>> thêm dòng gọi nén 3D ngay sau khi vẽ
+                compactVisualGridFinal(contOut, container, variantMetaByKey);
             }
             
             assert(contOut.item.length > 0, 'Cannot place any pallet in a new container. Check units or constraints.');
             containers.push(contOut);
         }
-        
-        const columnMode = !!config.enableMixedStackingColumns;
-        
-        if (!columnMode && config.utilizationPolish) {
-            for (let i = 0; i < containers.length; i++) {
-                tryImproveContainerByOneSwap(containers[i], variantMetaByKey, container, S, L);
-            }
-        }
-        
-        if (!columnMode && config.rebalanceAcrossContainers && containers.length > 1) {
-            rebalanceAcrossContainers(containers, variantMetaByKey, container, S, L, action);
-        }
-        
         // Recommendations
         
         const recommendedItems = buildRecommendations(containers, variantMetaByKey, inputData.boxesCutsize || {}, container, S, L, config, inputData);
@@ -198,18 +153,8 @@ define([], function () {
         // // Parse tolerance từ input
         const tolerancePct = parseFloat(String((inputData.tolerance || '')).replace('%','')) || 10;
         const utilizationThreshold = (100 - tolerancePct) / 100; // 10% → 0.9, 5% → 0.95
-        log.debug('utilizationThreshold', utilizationThreshold)
-        //
-        // // Nếu chỉ có 1 container đầy → không cần recommend
-        // if (containers.length === 1) {
-        //     const cont = containers[0];
-        //     let actualNet = 0;
-        //     for (const item of cont.item || []) {
-        //         actualNet += parseFloat(item.netWeight || 0);
-        //     }
-        //     const theoreticalCap = computeTheoreticalContainerCapacity(metaByKey, container, S, L, config, containers);
-        //     if (actualNet / theoreticalCap > utilizationThreshold) return {}; // sử dụng tolerance
-        // }
+        // log.debug('utilizationThreshold', utilizationThreshold)
+
         
         // Tìm item nhiều nhất trong container cuối
         let maxItem = null;
@@ -233,8 +178,6 @@ define([], function () {
         // Tính theoretical capacity (dùng container đầu tiên nếu có nhiều containers)
         const theoreticalCapacity = computeTheoreticalContainerCapacity(metaByKey, container, S, L, config, containers);
         
-        // Nếu container cuối đã gần full (>90%) → không recommend
-      //  if (lastContainerActualNet / theoreticalCapacity > 0.9) return {};
         
         const out = {};
         
@@ -243,9 +186,6 @@ define([], function () {
         const targetOrderWeight = currentContainerCount * theoreticalCapacity; // 2 * 15.719 = 31.438 tấn
         const shortfallToOrder = targetOrderWeight - totalOrderMT; // 31.438 - 20 = 11.438 tấn
         
-        // log.debug('currentContainerCount', currentContainerCount);
-        // log.debug('targetOrderWeight', targetOrderWeight);
-        // log.debug('shortfallToOrder', shortfallToOrder);
         
         if (shortfallToOrder >= 0.001) {
             const option1 = [];
@@ -393,18 +333,6 @@ define([], function () {
     }
     
     
-    
-    
-    function containerMetricsFromPlaced(placed, metaByKey) {
-        let pallets = placed.length;
-        let net = 0;
-        for (const p of placed) {
-            const m = metaByKey[p.variantKey];
-            net += (p.wMT || (m?.wMT || 0));
-        }
-        return { pallets, netMT: +(Math.round(net * 1e6) / 1e6) };
-    }
-    
     // ====================== 3D (contiguous by variant, colored) =====================
     
     function getVariantCounts(placedRaw) {
@@ -427,7 +355,7 @@ define([], function () {
         for (let i = 0; i < order.length; i++) map[order[i]] = COLORS[i % COLORS.length];
         return map;
     }
-    function generate3DCoordinatesColumnAware(containerOut, containerData, placedRaw, metaByKey, palletsPerLayerS, config) {
+    function generate3DCoordinates(containerOut, containerData, placedRaw, metaByKey, palletsPerLayerS, config) {
         const coords = [];
         if (!placedRaw || placedRaw.length === 0) return coords;
         
@@ -435,7 +363,6 @@ define([], function () {
         const someMeta = metaByKey[placedRaw[0].variantKey];
         const layout = calculateOptimalFloorLayout(someMeta, containerData);
         
-        const pprL = layout.palletsPerRowLength; // dọc chiều dài
         const pprW = layout.palletsPerRowWidth;  // dọc chiều rộng
         const S    = layout.palletsPerLayer;     // = palletsPerLayerS
         const aLen = layout.actualLength;
@@ -516,85 +443,46 @@ define([], function () {
         return coords;
     }
     
-    function generate3DCoordinates(containerOut, containerData, placedRaw, metaByKey, palletsPerLayerS, layersUsed) {
-        const coords = [];
-        if (!placedRaw || placedRaw.length === 0) return coords;
+    function compactVisualGridFinal(cont, containerData, metaByKey) {
+        if (!cont || !cont.coordinates3D || !cont.coordinates3D.length) return;
         
-        // Layout sàn (giả định footprint chung)
-        const someMeta = metaByKey[placedRaw[0].variantKey];
-        const layout = calculateOptimalFloorLayout(someMeta, containerData);
+        // Lấy layout slot ổn định từ variant đầu tiên của placedRaw
+        const anyMeta = (cont.__placedRaw && cont.__placedRaw[0])
+            ? metaByKey[cont.__placedRaw[0].variantKey]
+            : null;
+        if (!anyMeta) return;
         
-        const pprL = layout.palletsPerRowLength; // theo chiều dài
-        const pprW = layout.palletsPerRowWidth;  // theo chiều rộng
-        const ppl  = layout.palletsPerLayer;     // = palletsPerLayerS
-        const aLen = layout.actualLength;
+        const layout = calculateOptimalFloorLayout(anyMeta, containerData);
         const aWid = layout.actualWidth;
+        const aLen = layout.actualLength;
+        if (!aWid || !aLen) return;
         
-        // Đếm & sắp xếp variant → nhiều pallet trước
-        const counts = getVariantCounts(placedRaw);
-        const order  = getVariantOrder(counts, metaByKey);
-        const variantColors = buildVariantColorMapOrder(order);
+        const eps = 1e-6;
         
-        let yBase = 0;
-        let totalRemain = Object.values(counts).reduce((s, n) => s + n, 0);
-        for (let layerIndex = 0; layerIndex < layersUsed && totalRemain > 0; layerIndex++) {
-            let indexInLayer = 0; // 0..ppl-1
-            let layerMaxH = 0;
+        // Xác định các cột/hàng đang dùng
+        const usedCols = [...new Set(cont.coordinates3D.map(c => Math.floor((c.position.x + eps) / aWid)))].sort((a,b)=>a-b);
+        const usedRows = [...new Set(cont.coordinates3D.map(c => Math.floor((c.position.z + eps) / aLen)))].sort((a,b)=>a-b);
+        
+        // Map lại thành dải liên tục 0..N
+        const colMap = new Map(usedCols.map((c,i)=>[c,i]));
+        const rowMap = new Map(usedRows.map((r,i)=>[r,i]));
+        
+        // Áp dụng mapping để “kéo” các cột/hàng sát về mép trái/trước
+        cont.coordinates3D.forEach(c => {
+            const oldCol = Math.floor((c.position.x + eps) / aWid);
+            const oldRow = Math.floor((c.position.z + eps) / aLen);
+            const newCol = colMap.get(oldCol);
+            const newRow = rowMap.get(oldRow);
             
-            for (let oi = 0; oi < order.length && indexInLayer < ppl && totalRemain > 0; oi++) {
-                const vKey = order[oi];
-                let left = counts[vKey] || 0;
-                if (left <= 0) continue;
-                const meta = metaByKey[vKey] || {};
-                const vH = +meta.height || 0;
-                
-                const canPut = Math.min(left, ppl - indexInLayer);
-                for (let k = 0; k < canPut; k++) {
-                    // Sửa: fill theo CHIỀU RỘNG trước
-                    const row = Math.floor(indexInLayer / pprW);  // ← đổi từ pprL thành pprW
-                    const col = indexInLayer % pprW;             // ← đổi từ pprL thành pprW
-                    
-                    const x = col * aWid;  // col → width axis (tăng nhanh)
-                    const z = row * aLen;  // row → length axis (tăng chậm)
-                    const y = yBase;
-                    
-                    const netKg = (+meta.wMT || 0) * 1000;
-                    const approxBoxWeight = Math.round(netKg / 20);
-                    
-                    coords.push({
-                        product: meta.product || (meta.parentName ? (meta.parentName + ' : ' + (meta.displayName || 'Variant')) : (meta.displayName || 'Variant')),
-                        internalId: meta.internalId || '',
-                        displayName: meta.displayName || 'Variant',
-                        position: { x: round2(x), y: round2(y), z: round2(z) },
-                        originalDimensions: {
-                            width: +meta.width || 0,
-                            height: +meta.height || 0,
-                            length: +meta.length || 0,
-                            weight: approxBoxWeight
-                        },
-                        packedDimensions: { width: aWid, height: +meta.height || 0, length: aLen },
-                        remainingDimensions: {
-                            remainingWidth:  fix2(containerData.width  - ((col + 1) * aWid)),
-                            remainingHeight: fix2(containerData.height - (y + (+meta.height || 0))),
-                            remainingLength: fix2(containerData.length - ((row + 1) * aLen))
-                        },
-                        color: variantColors[vKey],
-                        type: meta.type || "cutsize",
-                        productLayer: meta.layer || '',
-                        pallet: true
-                    });
-                    
-                    indexInLayer++;
-                    layerMaxH = Math.max(layerMaxH, vH);
-                }
-                counts[vKey] -= canPut;
-                totalRemain -= canPut;
+            c.position.x = +(newCol * aWid).toFixed(2);
+            c.position.z = +(newRow * aLen).toFixed(2);
+            
+            if (c.remainingDimensions) {
+                c.remainingDimensions.remainingWidth  = (containerData.width  - ((newCol + 1) * aWid)).toFixed(2);
+                c.remainingDimensions.remainingLength = (containerData.length - ((newRow + 1) * aLen)).toFixed(2);
+                // remainingHeight giữ nguyên (không thay đổi y/height)
             }
-            
-            if (indexInLayer > 0) yBase += layerMaxH;
-        }
-        
-        return coords;
+        });
     }
     
     function calculateOptimalFloorLayout(variantMeta, containerData) {
@@ -736,66 +624,6 @@ define([], function () {
         return { products: list, variantMetaByKey: meta };
     }
     
-    // ============================== HEURISTICS ===============================
-    
-    function buildCandidates(products, remain) {
-        const cands = [];
-        for (const p of products) {
-            if (remain[p.productKey] <= 1e-9) continue;
-            for (const v of p.variants) {
-                cands.push({ productKey: p.productKey, variantKey: v.variantKey, wMT: v.wMT });
-            }
-        }
-        return cands;
-    }
-    
-    function scoreAndSortCandidates(cands, remain, targetPerSlot, config) {
-        const totalRemain = Object.keys(remain).reduce((s, k) => s + (remain[k] || 0), 0);
-        return cands
-            .map(c => {
-                const need = remain[c.productKey] || 0;
-                const gap = Math.abs(c.wMT - targetPerSlot);
-                const share = totalRemain > 0 ? (need / totalRemain) : 0;
-                const smallSharePenalty = (share < 0.15) ? (0.15 - share) : 0;
-                const heavyBonus = c.wMT;
-                return Object.assign({}, c, { _need: need, _gap: gap + smallSharePenalty, _heavy: heavyBonus });
-            })
-            .sort((a, b) => {
-                if (b._need !== a._need) return b._need - a._need;
-                if (a._gap !== b._gap) return a._gap - b._gap;
-                if (config.preferHeavierFirst) return b._heavy - a._heavy;
-                return a._heavy - b._heavy;
-            });
-    }
-    
-    function polishFillWithLighter(placed, products, remain, slotsLeft, weightLeft, metaByKey) {
-        if (slotsLeft <= 0 || weightLeft <= 1e-9) return;
-        const light = [];
-        for (const p of products) {
-            if (remain[p.productKey] <= 1e-9) continue;
-            for (const v of p.variants) {
-                light.push({ productKey: p.productKey, variantKey: v.variantKey, wMT: v.wMT, wNetMT: v.wNetMT });
-            }
-        }
-        light.sort((a, b) => a.wMT - b.wMT); // fill theo gross nhẹ trước (ràng buộc tải)
-        let did = true;
-        while (did && slotsLeft > 0 && weightLeft > 1e-9) {
-            did = false;
-            for (let i = 0; i < light.length; i++) {
-                const c = light[i];
-                if (remain[c.productKey] <= 1e-9) continue;
-                if (c.wMT - 1e-9 > weightLeft) continue; // constraint vẫn theo gross
-                placed.push({ productKey: c.productKey, variantKey: c.variantKey, wMT: c.wMT, wNetMT: c.wNetMT });
-                slotsLeft--;
-                weightLeft = round6(weightLeft - c.wMT); // giảm tải trọng (gross)
-                // *** quan trọng: trừ remain theo NET ***
-                remain[c.productKey] = Math.max(0, round6(remain[c.productKey] - c.wNetMT));
-                did = true;
-                if (slotsLeft <= 0 || weightLeft <= 1e-9) break;
-            }
-        }
-    }
-    
     
     // ============================== MIXED COLUMN STACKING ===============================
     function packOneContainerByColumns(products, remain, container, S, config, metaByKey) {
@@ -902,127 +730,7 @@ define([], function () {
         return placed;
     }
     
-    
-    // ============================== POLISH & REBALANCE ===============================
-    
-    function tryImproveContainerByOneSwap(cont, metaByKey, container, S, L) {
-        const placed = cont.__placedRaw || [];
-        if (!placed.length) return;
-        
-        const metrics = containerMetricsFromPlaced(placed, metaByKey);
-        const headroom = container.maxWeight - metrics.netMT;
-        if (headroom <= 1e-6) return;
-        
-        const placedWithW = placed.map((p, idx) => {
-            const w = p.wMT || (metaByKey[p.variantKey]?.wMT || 0);
-            return { idx, ...p, w };
-        });
-        
-        let improved = false;
-        for (let i = 0; i < placedWithW.length; i++) {
-            const cur = placedWithW[i];
-            const curW = cur.w;
-            const heavier = getHeavierSameProduct(cur.productKey, curW, metaByKey);
-            for (const cand of heavier) {
-                const delta = cand.wMT - curW;
-                if (delta <= 1e-9) continue;
-                if (delta <= headroom + 1e-9) {
-                    placed[cur.idx] = { productKey: cur.productKey, variantKey: cand.variantKey, wMT: cand.wMT };
-                    cont.__placedRaw = placed;
-                    improved = true;
-                    break;
-                }
-            }
-            if (improved) break;
-        }
-        
-        if (improved) {
-            const with3D = !!cont.coordinates3D;
-            const rebuilt = rebuildContainerFromPlaced(cont, metaByKey, container, S, L, with3D);
-            copyContainerOutputFields(cont, rebuilt);
-        }
-    }
-    
-    function getHeavierSameProduct(productKey, curW, metaByKey) {
-        const uniq = {};
-        for (const k in metaByKey) uniq[k] = metaByKey[k];
-        const cands = Object.keys(uniq)
-            .map(k => ({ variantKey: k, wMT: uniq[k].wMT || 0 }))
-            .filter(x => x.wMT > curW)
-            .sort((a,b) => b.wMT - a.wMT);
-        return cands;
-    }
-    
-    function rebalanceAcrossContainers(containers, metaByKey, container, S, L, action) {
-        if (!containers || containers.length < 2) return;
-        
-        for (let i = 0; i < containers.length - 1; i++) {
-            const contA = containers[i];
-            const placedA = contA.__placedRaw || [];
-            let metA = containerMetricsFromPlaced(placedA, metaByKey);
-            let slotA = (S * L) - metA.pallets;
-            let headroomA = container.maxWeight - metA.netMT;
-            if (headroomA <= 1e-6) continue;
-            
-            for (let j = containers.length - 1; j > i && headroomA > 1e-6; j--) {
-                const contB = containers[j];
-                const placedB = contB.__placedRaw || [];
-                if (!placedB.length) continue;
-                
-                const bWithW = placedB
-                    .map((p, idx) => ({ idx, ...p, w: p.wMT || (metaByKey[p.variantKey]?.wMT || 0) }))
-                    .sort((a, b) => b.w - a.w);
-                
-                for (let k = 0; k < bWithW.length && headroomA > 1e-6; k++) {
-                    const cand = bWithW[k];
-                    if (cand.w <= headroomA + 1e-9 && slotA > 0) {
-                        placedB.splice(cand.idx, 1);
-                        contB.__placedRaw = placedB;
-                        placedA.push({ productKey: cand.productKey, variantKey: cand.variantKey, wMT: cand.w });
-                        contA.__placedRaw = placedA;
-                        
-                        metA.netMT = +(Math.round((metA.netMT + cand.w) * 1e6)/1e6);
-                        metA.pallets += 1;
-                        slotA -= 1;
-                        headroomA = container.maxWeight - metA.netMT;
-                        
-                        const with3DB = !!contB.coordinates3D;
-                        const rebuiltB = rebuildContainerFromPlaced(contB, metaByKey, container, S, L, with3DB);
-                        copyContainerOutputFields(contB, rebuiltB);
-                    }
-                }
-            }
-            
-            const with3DA = !!contA.coordinates3D;
-            const rebuiltA = rebuildContainerFromPlaced(contA, metaByKey, container, S, L, with3DA);
-            copyContainerOutputFields(contA, rebuiltA);
-        }
-        
-        for (let idx = 0; idx < containers.length; idx++) {
-            containers[idx].containerIndex = idx + 1;
-            if (action === 'view3D') {
-                containers[idx].coordinates3D = generate3DCoordinates(
-                    containers[idx], container, containers[idx].__placedRaw || [], metaByKey, S, L
-                );
-            }
-        }
-    }
-    
-    function rebuildContainerFromPlaced(cont, metaByKey, container, S, L, with3D) {
-        const rebuilt = materializeContainerOutput(cont.containerIndex, cont.__placedRaw, metaByKey, container, S, L);
-        rebuilt.containerIndex = cont.containerIndex;
-        if (with3D) {
-            rebuilt.coordinates3D = generate3DCoordinates(rebuilt, container, rebuilt.__placedRaw || cont.__placedRaw, metaByKey, S, L);
-        }
-        rebuilt.__placedRaw = cont.__placedRaw.slice();
-        return rebuilt;
-    }
-    
-    function copyContainerOutputFields(dst, src) {
-        for (const k in dst) delete dst[k];
-        for (const k in src) dst[k] = src[k];
-    }
-    
+
     // ============================== UNITS / UOM ===============================
     // tính sức chứa 1 container
     function computeTheoreticalContainerCapacity(metaByKey, container, S, L, config, containers) {
@@ -1043,71 +751,35 @@ define([], function () {
         // Danh sách variant
         const variants = Object.keys(metaByKey).map(k => metaByKey[k]).filter(m => isNum(m.wNetMT) && isNum(m.height));
         
-        if (config && config.enableMixedStackingColumns) {
-            // --- Column stacking ---
-            const H = container.height;
-            const tallTh = H / 2;
-            
-            let bestPerCol = 0;
-            
-            // đơn chiếc
-            for (const a of variants) {
-                if (a.height <= H + 1e-9) bestPerCol = Math.max(bestPerCol, a.wNetMT);
-            }
-            // cặp (tối đa 2 pallet/cột, ≤1 tall, tổng cao ≤ H)
-            for (let i = 0; i < variants.length; i++) {
-                const a = variants[i];
-                for (let j = i; j < variants.length; j++) {
-                    const b = variants[j];
-                    const tallCount = ((a.height >= tallTh - 1e-9) ? 1 : 0) + ((b.height >= tallTh - 1e-9) ? 1 : 0);
-                    const hSum = (+a.height) + (+b.height);
-                    if (tallCount <= 1 && hSum <= H + 1e-9) {
-                        bestPerCol = Math.max(bestPerCol, (+a.wNetMT) + (+b.wNetMT));
-                    }
+        // --- Column stacking ---
+        const H = container.height;
+        const tallTh = H / 2;
+        
+        let bestPerCol = 0;
+        
+        // đơn chiếc
+        for (const a of variants) {
+            if (a.height <= H + 1e-9) bestPerCol = Math.max(bestPerCol, a.wNetMT);
+        }
+        // cặp (tối đa 2 pallet/cột, ≤1 tall, tổng cao ≤ H)
+        for (let i = 0; i < variants.length; i++) {
+            const a = variants[i];
+            for (let j = i; j < variants.length; j++) {
+                const b = variants[j];
+                const tallCount = ((a.height >= tallTh - 1e-9) ? 1 : 0) + ((b.height >= tallTh - 1e-9) ? 1 : 0);
+                const hSum = (+a.height) + (+b.height);
+                if (tallCount <= 1 && hSum <= H + 1e-9) {
+                    bestPerCol = Math.max(bestPerCol, (+a.wNetMT) + (+b.wNetMT));
                 }
             }
-            
-            const capGeom = S * bestPerCol;               // theo thể tích/chiều cao
-            const capWeight = container.maxWeight;        // theo cân nặng
-            return round6(Math.min(capGeom, capWeight));  // MT/container
-        } else {
-            // --- Global L layers ---
-            const Hmax = container.height / Math.max(1, L);
-            // chọn variant nặng nhất phù hợp chiều cao mỗi tầng
-            let heaviest = 0;
-            for (const v of variants) if (v.height <= Hmax + 1e-9) heaviest = Math.max(heaviest, v.wMT);
-            const capGeom = (S * Math.max(1, L)) * heaviest;
-            const capWeight = container.maxWeight;
-            return round6(Math.min(capGeom, capWeight));
-        }
-    }
-    //chọn product đại diện để hiển thị recommend
-    function pickRepresentativeMetaForRecommendation(containers, metaByKey, boxesCutsize) {
-        // Ưu tiên: variant có mặt nhiều nhất trong tất cả containers
-        const cnt = {};
-        (containers || []).forEach(c => (c.__placedRaw || []).forEach(p => {
-            cnt[p.variantKey] = (cnt[p.variantKey] || 0) + 1;
-        }));
-        let bestVar = null, bestCnt = -1;
-        for (const k in cnt) if (cnt[k] > bestCnt) { bestCnt = cnt[k]; bestVar = k; }
-        if (bestVar && metaByKey[bestVar]) return metaByKey[bestVar];
-        
-        // fallback: lấy product đầu tiên trong boxesCutsize
-        const firstKey = Object.keys(boxesCutsize || {})[0];
-        if (firstKey) {
-            // tìm variant nặng nhất của product này trong meta
-            let pick = null, w = -1;
-            for (const k in metaByKey) {
-                const m = metaByKey[k];
-                if (m.productKey === firstKey && m.wMT > w) { w = m.wMT; pick = m; }
-            }
-            if (pick) return pick;
         }
         
-        // fallback cuối cùng: bất kỳ meta
-        const anyK = Object.keys(metaByKey)[0];
-        return metaByKey[anyK] || {};
+        const capGeom = S * bestPerCol;               // theo thể tích/chiều cao
+        const capWeight = container.maxWeight;        // theo cân nặng
+        return round6(Math.min(capGeom, capWeight));  // MT/container
+        
     }
+    
     function enforceTallPerColumnConstraint(contOut, metaByKey, container, S) {
         // "Tall" = pallet có height > H/2 → trong 20’ A4 (4L) = tall
         const placed = contOut.__placedRaw || [];
@@ -1169,24 +841,13 @@ define([], function () {
             // Đơn vị
             isKg: true,                     // mặc định hiểu net/gross per pallet là KG → đổi sang MT
             
-            // Ưu tiên chọn pallet
-            preferHeavierFirst: true,
-            maxVariantsPerContainer: null,
-            
-            // Hiển thị (trường 'layer' trong item output)
-            containerStackLayers: 1,
             
             // Stack toàn cục (fallback, dùng cho 3D)
             maxStackLayers: 2,
             strictStackHeightCheck: true,
             
-            // Dồn sát tải
-            utilizationPolish: true,
-            rebalanceAcrossContainers: true,
             
-            // Xếp theo CỘT (ưu tiên cho 20' & mix 4L+3L)
-            enableMixedStackingColumns: true,
-            maxStacksPerColumn: 2
+            maxStacksPerColumn: 3
         };
         return Object.assign(def, cfg || {});
     }
@@ -1207,8 +868,6 @@ define([], function () {
     }
     
     function sumRemain(remain) { let s = 0; for (const k in remain) s += (remain[k] || 0); return s; }
-    function sum(arr) { let s = 0; for (const x of arr) s += (+x || 0); return s; }
-    
     function formatQty(n, unit) { return `${toInt(n)} ${unit}`; }
     function toInt(x) { return Math.round(+x); }
     function fixed3(x) { return (Math.round((+x) * 1000) / 1000).toFixed(3); }
@@ -1218,9 +877,18 @@ define([], function () {
     function isNum(x) { return typeof x === 'number' && !isNaN(x); }
     function assert(cond, msg) { if (!cond) throw new Error(msg); }
     function round6(x) { return Math.round((+x) * 1e6) / 1e6; }
-    function roundDown3(x) { return Math.floor((+x + 1e-9) * 1000) / 1000; }
-    function roundUp3(x)   { return Math.ceil ((+x - 1e-9) * 1000) / 1000; }
     
+    function saveFile(result, name){
+        // Save data into file cabinet
+        var fileObj3D = file.create({
+            name: name + '.json',
+            fileType: file.Type.JSON,
+            contents: JSON.stringify(result),
+            folder: 12262
+        });
+        fileId3D = fileObj3D.save();
+        log.debug('File Saved', 'File ID 3D Input: ' + fileId3D);
+    }
     
     // ============================== EXPORTS ===============================
     
