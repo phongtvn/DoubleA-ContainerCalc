@@ -4,9 +4,9 @@
  * @NModuleScope Public
  */
 
-define(['N/record','N/search','N/cache','./Calc/calc_copy_paper.js', './Calc/calc_copy_paper_multi.js'], //, './Calc/calc_roll.js', './Calc/calc_roll_multi.js'],
+define(['N/record','N/search','N/cache','./Calc/calc_copy_paper.js', './Calc/calc_copy_paper_multi.js', './Calc/calc_roll_multi.js'], //, './Calc/calc_roll.js', './Calc/calc_roll_multi.js'],
     
-    function(record, search, cache, calc_copy_paper, calc_copy_paper_multi) { //, calc_roll, calc_roll_multi) {
+    function(record, search, cache, calc_copy_paper, calc_copy_paper_multi, calc_roll_multi) { //, calc_roll, calc_roll_multi) {
         
         /**
          * Main Suitelet Entry Point
@@ -217,23 +217,11 @@ define(['N/record','N/search','N/cache','./Calc/calc_copy_paper.js', './Calc/cal
                 // Route to appropriate calculation function
                 switch (activeBoxType) {
                     case 'boxesCutsize':
-                        if (productCount === 1) {
-                       //     log.debug('Calling calc_copy_paper.greedyCalcCutsize for single product');
-                       //     return calc_copy_paper.greedyCalcCutsize(payload);
-                            return calc_copy_paper_multi.greedyCalcCutsize(payload);
-                        } else {
-                           // log.debug('Calling calc_copy_paper_multi.greedyCalcCutsize for multiple products');
-                            return calc_copy_paper_multi.greedyCalcCutsize(payload);
-                        }
-                    
-                    // case 'boxesCMRoll':
-                    //     if (productCount === 1) {
-                    //         log.debug('Calling calc_roll.greedyCalcCutsize for single product');
-                    //         return calc_roll.greedyCalcCutsize(payload);
-                    //     } else {
-                    //         log.debug('Calling calc_roll_multi.greedyCalcCutsize for multiple products');
-                    //         return calc_roll_multi.greedyCalcCutsize(payload);
-                    //     }
+                        return calc_copy_paper_multi.greedyCalcCutsize(payload);
+                    case 'boxesRoll':
+                        log.debug('Calling calc_roll_multi.greedyCalc for multiple products');
+                        return calc_roll_multi.greedyCalc(payload);
+                      
                     
                     default:
                         log.debug(`No calculation function defined for ${activeBoxType}, returning original payload`);
@@ -289,20 +277,81 @@ define(['N/record','N/search','N/cache','./Calc/calc_copy_paper.js', './Calc/cal
         }
         
         ItemProcessor.prototype = {
+            
             /**
-             * Process the item
+             * Main process method - routes to appropriate handler based on product type
              */
             process: function() {
                 const itemData = this.loadItemData();
                 const specialConditions = this.loadSpecialConditions(itemData);
-                // if (this.isCopyPaper(itemData.productTypeName)) {
-                this.getItemData(itemData, specialConditions);
-                // } else {
-                //     // Handle other product types
-                //     this.processOtherProductType(itemData, specialConditions);
-                // }
+                
+                // Determine product type and route to appropriate handler
+                const productType = this.determineProductType(itemData);
+                this.itemType = productType
+                log.debug('productType', productType)
+                switch (productType) {
+                    case 'cutsize':
+                        this.getItemData(itemData, specialConditions,"boxesCutsize");
+                        break;
+                    case 'roll':
+                        this.getItemData(itemData, specialConditions, "boxesRoll");
+                        break;
+                    default:
+                        log.error('Unknown product type', productType);
+                        throw `Unsupported product type: ${productType}`;
+                }
             },
-            
+            /**
+             * Determine product type based on item data
+             */
+            determineProductType: function(itemData) {
+                const productTypeName = itemData.productTypeName?.toLowerCase() || '';
+                
+                // Define your business rules here
+                if (productTypeName.includes('roll') || productTypeName.includes('cm roll')) {
+                    return 'roll';
+                } else if (productTypeName.includes('cutsize') || productTypeName.includes('cut size')) {
+                    return 'cutsize';
+                }
+                
+                // Default fallback - you might want to add more logic here
+                // Maybe check other fields or use different criteria
+                return 'cutsize'; // or throw error for unknown types
+            },
+            /**
+             * Process copy paper items
+             */
+            getItemData: function(itemData, specialConditions, type) {
+                const weight = this.quantity // / 100;
+                const itemVariants = this.loadItemVariants(itemData, specialConditions);
+                log.debug('itemVariants', itemVariants)
+                const variants = [];
+                itemVariants.forEach((variant) => {
+                    const processedItem = this.buildItem(
+                        variant,
+                        itemData,
+                        weight
+                    );
+                    variants.push(processedItem);
+                });
+                
+                const parentKey = `${itemData.displayName}`;
+                
+                // Validate that variants were found
+                if (variants.length === 0) {
+                    const errorMsg = `No variants found for product: ${itemData.displayName} (ID: ${this.itemId})` +
+                        `\nPallet: ${this.pallet}` +
+                        `\nShip to Country: ${this.customerData.shipToCountry}`;
+                    log.error('No variants found', errorMsg);
+                    throw errorMsg;
+                }
+                
+                // Store in the new format with weight and variants
+                this.containers[type][parentKey] = {
+                    weight: weight,
+                    variants: variants
+                };
+            },
             /**
              * Normalize UOM text
              */
@@ -466,47 +515,22 @@ define(['N/record','N/search','N/cache','./Calc/calc_copy_paper.js', './Calc/cal
             parseArrayField: function(fieldValue) {
                 return fieldValue ? fieldValue.toString().split(',').map(v => v.trim()) : [];
             },
-            
-            /**
-             * Check if product is copy paper
-             */
-            isCopyPaper: function(productTypeName) {
-                return productTypeName && productTypeName.toLowerCase().includes('copy paper');
-            },
-            
-            /**
-             * Process copy paper items
-             */
-            getItemData: function(itemData, specialConditions) {
-                const weight = this.quantity // / 100;
-                const itemVariants = this.loadItemVariants(itemData, specialConditions);
-                //   log.debug('itemVariants', itemVariants)
-                
-                const variants = [];
-                itemVariants.forEach((variant) => {
-                    const processedItem = this.buildItem(
-                        variant,
-                        itemData,
-                        weight
-                    );
-                    variants.push(processedItem);
-                });
-                
-                const parentKey = `${itemData.displayName}`; // - ${weight}${this.qtyUOM}`;
-                
-                // Store in the new format with weight and variants
-                this.containers.boxesCutsize[parentKey] = {
-                    weight: weight,
-                    variants: variants
-                };
-            },
+           
+           
             
             /**
              * Load item variants (children products)
              */
             loadItemVariants: function(itemData, specialConditions) {
                 const filters = this.buildVariantFilters(specialConditions);
-                filters.push('AND', ['parent', 'is', this.itemId]);
+                
+                
+                if(this.itemType === 'roll'){
+                    filters.push(['internalid', 'anyof', this.itemId]);
+                }else{
+                    filters.push('AND', ['parent', 'is', this.itemId]);
+                }
+                    
                 filters.push('AND', ['custitem_infor_for_sales_country', 'is', this.customerData.shipToCountry]);
                 const searchItemData = this.searchItemData(itemData.itemType, filters);
                    log.debug('searchItemData', searchItemData)
@@ -532,7 +556,9 @@ define(['N/record','N/search','N/cache','./Calc/calc_copy_paper.js', './Calc/cal
                         'custitem_infor_pallet_length_inch',
                         'custitem_infor_pallet_height_inch',
                         'custitem_infor_std_net_weight',
-                        'custitem_infor_gross_weight'
+                        'custitem_infor_gross_weight',
+                        'custitem_infor_diameter_mm',
+                        'custitem_infor_width_mm'
                     ]
                 });
                 
@@ -543,12 +569,17 @@ define(['N/record','N/search','N/cache','./Calc/calc_copy_paper.js', './Calc/cal
              * Build filters for item variants based on special conditions
              */
             buildVariantFilters: function(specialConditions) {
-                //   log.debug('this.customerData', this.customerData)
-                if(!this.pallet )
+                
+                
+                let filters = []
+                
+                if(!this.pallet && this.itemType !== 'roll')
                     throw 'Select Pallet first'
                 
-                const filters = [['custitem_infor_pallet_type', 'anyof', this.pallet]];
-                // log.debug('specialConditions', specialConditions)
+                if(this.itemType !== 'roll')
+                    filters = [['custitem_infor_pallet_type', 'anyof', this.pallet]];
+                
+                
                 if (!specialConditions.length) return filters;
                 
                 const aggregatedCriteria = this.aggregateSpecialConditions(specialConditions);
@@ -580,12 +611,6 @@ define(['N/record','N/search','N/cache','./Calc/calc_copy_paper.js', './Calc/cal
                     sc.scScaitemsubtype?.forEach(subtype => sets.subtype.add(subtype));
                     if (sc.scGram) sets.gram.add(sc.scGram);
                 });
-                // log.debug('FILTER', {
-                //     'custitem_infor_layer': Array.from(sets.layer),
-                //     'custitem_infor_paper_size': Array.from(sets.paperSize),
-                //     'custitem_infor_sca_itemsubtype': Array.from(sets.subtype),
-                //     'cseg_item_gram': Array.from(sets.gram)
-                // })
                 return {
                     'custitem_infor_layer': Array.from(sets.layer),
                     'custitem_infor_paper_size': Array.from(sets.paperSize),
@@ -617,6 +642,10 @@ define(['N/record','N/search','N/cache','./Calc/calc_copy_paper.js', './Calc/cal
                     weight: parseFloat(weight || 0),
                     netWeightPerPallet: parseFloat(variant.getValue({ name: 'custitem_infor_std_net_weight' }) || 0),
                     grossWeightPerPallet: parseFloat(variant.getValue({ name: 'custitem_infor_gross_weight' }) || 0),
+                    netWeightPerRoll: parseFloat(variant.getValue({ name: 'custitem_infor_std_net_weight' }) || 0),
+                    grossWeightPerRoll: parseFloat(variant.getValue({ name: 'custitem_infor_gross_weight' }) || 0),
+                    diameter: parseFloat(variant.getText({ name: 'custitem_infor_diameter_mm' })),
+                    width_roll: parseFloat(variant.getValue({ name: 'custitem_infor_width_mm' })),
                     maxWeightTon: weight,
                     baseUnitAbbreviation: this.qtyUOM || uomRates.baseUnitAbbreviation,
                     uomConversionRates: uomRates.rates

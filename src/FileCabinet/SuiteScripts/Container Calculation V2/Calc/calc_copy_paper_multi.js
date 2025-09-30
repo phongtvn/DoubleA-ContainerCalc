@@ -140,8 +140,11 @@ define(['N/file'], function (file) {
                 actualNet += parseFloat(item.netWeight || 0);
             }
             // Nếu gần full (>90% theoretical capacity) → không recommend
-            const theoreticalCap = computeTheoreticalContainerCapacity(metaByKey, container, S, L, config, containers);
-            if (actualNet / theoreticalCap > 0.9) return {};
+         //   const theoreticalCap = computeTheoreticalContainerCapacity(metaByKey, container, S, L, config, containers);
+            // log.debug('theoreticalCap', theoreticalCap)
+            // log.debug('actualNet', actualNet)
+          // if (actualNet / theoreticalCap > 0.9) return {};
+           // if (Math.abs(actualNet - theoreticalCap) < 0.001) return {};
         }
         
         // Container cuối (có thể "lẻ")
