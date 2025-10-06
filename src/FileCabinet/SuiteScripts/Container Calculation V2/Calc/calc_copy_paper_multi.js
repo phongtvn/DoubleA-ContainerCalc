@@ -180,7 +180,7 @@ define(['N/file'], function (file) {
         
         // Tính theoretical capacity (dùng container đầu tiên nếu có nhiều containers)
         const theoreticalCapacity = computeTheoreticalContainerCapacity(metaByKey, container, S, L, config, containers);
-        
+        log.debug('theoreticalCapacity', theoreticalCapacity)
         
         const out = {};
         
@@ -189,6 +189,9 @@ define(['N/file'], function (file) {
         const targetOrderWeight = currentContainerCount * theoreticalCapacity; // 2 * 15.719 = 31.438 tấn
         const shortfallToOrder = targetOrderWeight - totalOrderMT; // 31.438 - 20 = 11.438 tấn
         
+        
+        log.debug('targetOrderWeight', targetOrderWeight)
+        log.debug('shortfallToOrder', shortfallToOrder)
         
         if (shortfallToOrder >= 0.001) {
             const option1 = [];
@@ -787,9 +790,33 @@ define(['N/file'], function (file) {
                 }
             }
         }
-        
         const capGeom = S * bestPerCol;               // theo thể tích/chiều cao
-        const capWeight = container.maxWeight;        // theo cân nặng
+        
+        // Tìm variant nhẹ nhất (GROSS) để tính số pallet tối đa
+        let lightestGross = Infinity;
+        for (const v of variants) {
+            if (v.grossWeightPerPalletMT && v.grossWeightPerPalletMT > 0) {
+                lightestGross = Math.min(lightestGross, v.grossWeightPerPalletMT);
+            }
+        }
+        
+        let capWeight = container.maxWeight; // default
+        
+        if (lightestGross !== Infinity && lightestGross > 0) {
+            // Số pallet tối đa theo trọng lượng GROSS
+            const maxPallets = Math.floor(container.maxWeight / lightestGross);
+            
+            // Tính lại NET capacity tương ứng với số pallet đó
+            // Giả sử tỷ lệ NET/GROSS đồng nhất, hoặc lấy variant có NET weight cao nhất
+            let bestNetPerPallet = 0;
+            for (const v of variants) {
+                if (v.wNetMT > bestNetPerPallet) bestNetPerPallet = v.wNetMT;
+            }
+            
+            capWeight = maxPallets * bestNetPerPallet;
+        }
+        
+        
         return round6(Math.min(capGeom, capWeight));  // MT/container
         
     }

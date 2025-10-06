@@ -143,8 +143,8 @@ define(['N/cache', 'N/ui/serverWidget', 'N/file'], function (cache, serverWidget
                                    ${item.type} : 
                                    ${item.displayName} : 
                                    <!-- ${item.productLayer} : --->
-                                     ${(item.type === "Roll" || item.type === "CM Roll" || item.type === "wrapper")
-                                        ? `${item.packedSize.diameter} x ${item.packedSize.width}` // ถ้าเป็น Roll ให้แสดงขนาดของ Roll | if it's Roll, show the size of the Roll
+                                     ${(item.type === "roll" || item.type === "CM Roll" || item.type === "wrapper")
+                                        ? `${item.packedSize.diameter.toFixed(2)} x ${item.packedSize.width.toFixed(2)}` // ถ้าเป็น Roll ให้แสดงขนาดของ Roll | if it's Roll, show the size of the Roll
                                         : `${item.packedDimensions.width} x ${item.packedDimensions.height} x ${item.packedDimensions.length}`
                                     }  
                                     <!---   | XYZ: ${item.position.x}, ${item.position.y}, ${item.position.z} --->
@@ -342,8 +342,44 @@ define(['N/cache', 'N/ui/serverWidget', 'N/file'], function (cache, serverWidget
                             allDetails.forEach(detail => detail.style.display = 'none'); // ซ่อนรายละเอียดของ container ทั้งหมด | hide details of all containers
                             details.style.display = 'block'; // แสดงรายละเอียดของ container ที่เลือก | show details of selected container
                         }
-
-                        function createRoll(radius, height, color, position) { 
+                        function createRoll(radius, height, color, position) {
+                          var geometry = new THREE.CylinderGeometry(radius, radius, height, 32);
+                          var material = new THREE.MeshPhongMaterial({ color: parseInt(color, 16) });
+                          var cylinder = new THREE.Mesh(geometry, material);
+                        
+                          // ✅ Calc xuất vị trí TÂM → không cộng +radius ở X/Z
+                          cylinder.position.set(position.x, position.y + (height / 2), position.z);
+                        
+                          cylinder.castShadow = true;
+                          cylinder.receiveShadow = true;
+                          containerGroup.add(cylinder);
+                        
+                          // wireframe circles
+                          function createCircle(radius, yPosition) {
+                            var circleGeometry = new THREE.BufferGeometry();
+                            var circleVertices = [];
+                            for (let i = 0; i <= 32; i++) {
+                              let angle = (i / 32) * Math.PI * 2;
+                              let x = Math.cos(angle) * radius;
+                              let z = Math.sin(angle) * radius;
+                              circleVertices.push(x, yPosition, z);
+                            }
+                            circleGeometry.setAttribute('position', new THREE.Float32BufferAttribute(circleVertices, 3));
+                            var circleMaterial = new THREE.LineBasicMaterial({ color: 0x000000 });
+                            return new THREE.Line(circleGeometry, circleMaterial);
+                          }
+                        
+                          var topCircle    = createCircle(radius,  height / 2);
+                          var bottomCircle = createCircle(radius, -height / 2); // ✅ trước đây bị +height/2
+                        
+                          topCircle.position.copy(cylinder.position);
+                          bottomCircle.position.copy(cylinder.position);
+                        
+                          containerGroup.add(topCircle);
+                          containerGroup.add(bottomCircle);
+                        }
+                        
+                        function createRoll_old(radius, height, color, position) {
                             var geometry = new THREE.CylinderGeometry(radius, radius, height, 32); // สร้างรูปทรงกระบอก | create a cylinder shape
                             var material = new THREE.MeshPhongMaterial({ color: parseInt(color, 16) }); // สร้างสีของกระบอก | create color of the cylinder
                             var cylinder = new THREE.Mesh(geometry, material); // สร้างกระบอก | create a cylinder
