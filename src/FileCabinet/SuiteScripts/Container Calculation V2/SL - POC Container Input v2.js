@@ -4,7 +4,7 @@
  * @NModuleScope Public
  */
 
-define(['N/record','N/search','N/cache','./Calc/calc_copy_paper.js', './Calc/calc_copy_paper_multi.js', './Calc/calc_roll_multi.js'], //, './Calc/calc_roll.js', './Calc/calc_roll_multi.js'],
+define(['N/record','N/search','N/cache','./Calc/calc_copy_paper_recommend.js', './Calc/calc_copy_paper_multi.js', './Calc/calc_roll_multi.js'], //, './Calc/calc_roll.js', './Calc/calc_roll_multi.js'],
     
     function(record, search, cache, calc_copy_paper, calc_copy_paper_multi, calc_roll_multi) { //, calc_roll, calc_roll_multi) {
         

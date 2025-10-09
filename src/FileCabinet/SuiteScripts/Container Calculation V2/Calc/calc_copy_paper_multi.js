@@ -1,7 +1,7 @@
 /**
  * @NApiVersion 2.1
  */
-define(['N/file'], function (file) {
+define(['N/file', './calc_copy_paper_recommend'], function (file, recommendation) {
     
     const imgurl = "https://sca.doubleapaper.com/assets/Container_Image/container.png";
     
@@ -74,10 +74,6 @@ define(['N/file'], function (file) {
             const shortfall = sumRemain(remain);
             const minPal = minPalletWeightRemaining(remain, products, variantMetaByKey);
             
-            // nếu muốn bám tolerance từ input (ví dụ 10%) thì bổ sung điều kiện dưới
-            //  const tolPct = parseFloat(String((inputData.tolerance || '')).replace('%','')) || 0;
-            //  const totalOrderMT = Object.keys(inputData.boxesCutsize || {}).reduce((s,k)=>s+(+inputData.boxesCutsize[k].weight||0),0);
-            //   const withinTolerance = (tolPct > 0) ? (shortfall <= (tolPct/100) * totalOrderMT + 1e-9) : false;
             
             if ((minPal > 0 && shortfall + 1e-9 < minPal)){  // || withinTolerance) {
                 break; // không mở cont mới
@@ -107,8 +103,6 @@ define(['N/file'], function (file) {
                     contOut, container, contOut.__placedRaw, variantMetaByKey, S, config
                 );
                 
-                // >>> thêm dòng gọi nén 3D ngay sau khi vẽ
-             //   compactVisualGridFinal(contOut, container, variantMetaByKey);
             }
             
             assert(contOut.item.length > 0, 'Cannot place any pallet in a new container. Check units or constraints.');
@@ -116,229 +110,12 @@ define(['N/file'], function (file) {
         }
         // Recommendations
         
-        const recommendedItems = buildRecommendations(containers, variantMetaByKey, inputData.boxesCutsize || {}, container, S, L, config, inputData);
+        const recommendedItems = recommendation.buildRecommendations(containers, variantMetaByKey, inputData.boxesCutsize || {}, container, S, L, config, inputData);
         containers.forEach(cont =>{
             delete cont.__placedRaw
         })
         return { containers, recommendedItems };
     }
-    
-    // ====================== RECOMMENDATIONS =====================
-    function buildRecommendations(containers, metaByKey, boxesCutsize, container, S, L, config, inputData) {
-        if (!containers || containers.length === 0) return {};
-        
-        // Tổng order (MT)
-        const totalOrderMT = Object.keys(boxesCutsize || {}).reduce((s, k) => s + (+boxesCutsize[k].weight || 0), 0);
-        if (totalOrderMT <= 0) return {};
-        
-        // Nếu chỉ có 1 container đầy → không cần recommend
-        if (containers.length === 1) {
-            // Check xem container có "đầy" không
-            const cont = containers[0];
-            let actualNet = 0;
-            for (const item of cont.item || []) {
-                actualNet += parseFloat(item.netWeight || 0);
-            }
-            // Nếu gần full (>90% theoretical capacity) → không recommend
-         //   const theoreticalCap = computeTheoreticalContainerCapacity(metaByKey, container, S, L, config, containers);
-            // log.debug('theoreticalCap', theoreticalCap)
-            // log.debug('actualNet', actualNet)
-          // if (actualNet / theoreticalCap > 0.9) return {};
-           // if (Math.abs(actualNet - theoreticalCap) < 0.001) return {};
-        }
-        
-        // Container cuối (có thể "lẻ")
-        const lastContainer = containers[containers.length - 1];
-        const lastContainerItems = lastContainer.item || [];
-        
-        if (lastContainerItems.length === 0) return {};
-        
-        // // Parse tolerance từ input
-        const tolerancePct = parseFloat(String((inputData.tolerance || '')).replace('%','')) || 10;
-        const utilizationThreshold = (100 - tolerancePct) / 100; // 10% → 0.9, 5% → 0.95
-        // log.debug('utilizationThreshold', utilizationThreshold)
-
-        
-        // Tìm item nhiều nhất trong container cuối
-        let maxItem = null;
-        let maxWeight = 0;
-        for (const item of lastContainerItems) {
-            const itemNet = parseFloat(item.netWeight || 0);
-            if (itemNet > maxWeight) {
-                maxWeight = itemNet;
-                maxItem = item;
-            }
-        }
-        
-        if (!maxItem) return {};
-        
-        // Tính actual capacity của container cuối
-        let lastContainerActualNet = 0;
-        for (const item of lastContainerItems) {
-            lastContainerActualNet += parseFloat(item.netWeight || 0);
-        }
-        
-        // Tính theoretical capacity (dùng container đầu tiên nếu có nhiều containers)
-        const theoreticalCapacity = computeTheoreticalContainerCapacity(metaByKey, container, S, L, config, containers);
-        log.debug('theoreticalCapacity', theoreticalCapacity)
-        
-        const out = {};
-        
-        // Option 1: Mua thêm để full tất cả containers hiện tại
-        const currentContainerCount = containers.length;
-        const targetOrderWeight = currentContainerCount * theoreticalCapacity; // 2 * 15.719 = 31.438 tấn
-        const shortfallToOrder = targetOrderWeight - totalOrderMT; // 31.438 - 20 = 11.438 tấn
-        
-        
-        log.debug('targetOrderWeight', targetOrderWeight)
-        log.debug('shortfallToOrder', shortfallToOrder)
-        
-        if (shortfallToOrder >= 0.001) {
-            const option1 = [];
-            option1.push({
-                type: "dedicated",
-                action: "increase",
-                internalId: maxItem.internalId || "",
-                parentID: findParentID(maxItem.internalId, metaByKey) || null,
-                displayName: findDisplayName(maxItem.internalId, metaByKey) || maxItem.displayName || "",
-                suggestedQty: fixed3(shortfallToOrder), // 11.438 tấn
-                uom: "MT",
-                currentOrder: fixed3(totalOrderMT), // 20.000
-                targetWeight: fixed3(targetOrderWeight), // 31.438
-                containers: 0, // không thêm container mới
-                loadingType: "single_variant"
-            });
-            out.option1 = option1;
-        }
-        
-        // Option 2: Giảm các items trong container cuối
-        log.debug('containers.length', containers.length)
-        if ( containers.length > 0) {
-            const FULL_UTIL = 0.999;   // coi như full nếu >= 99.9%
-            const THRESHOLD = utilizationThreshold; // ngưỡng 90%
-            
-            // Tổng order (NET MT)
-            const totalOrderMT = Object.keys(boxesCutsize || {}).reduce((s, k) => s + (+boxesCutsize[k].weight || 0), 0);
-            
-            // Tổng packed (NET MT)
-            const totalPackedMT = containers.reduce((s, c) =>
-                s + (c.item || []).reduce((ss, it) => ss + (parseFloat(it.netWeight) || 0), 0), 0
-            );
-            
-            const lastContainer = containers[containers.length - 1];
-            const lastContainerItems = lastContainer.item || [];
-            const lastNet = lastContainerItems.reduce((s, it) => s + (parseFloat(it.netWeight) || 0), 0);
-            const lastUtil = theoreticalCapacity > 0 ? lastNet / theoreticalCapacity : 0;
-            
-            const option2 = [];
-            
-            // --- CASE A: Cont cuối ~ full & Order > Packed => giảm đúng phần dư (order - packed)
-            if (lastUtil >= FULL_UTIL) {
-                const overage = Math.max(0, totalOrderMT - totalPackedMT); // ví dụ: 18 - 17.964 = 0.036
-                if (overage > 0.001) {
-                    // chọn product "trội" trong cont cuối
-                    const weightByProductInLast = {};
-                    for (const it of lastContainerItems) {
-                        const pKey = findProductKeyByInternalId(it.internalId, metaByKey);
-                        if (!pKey) continue;
-                        weightByProductInLast[pKey] = (weightByProductInLast[pKey] || 0) + (parseFloat(it.netWeight) || 0);
-                    }
-                    let chosenKey = null, maxW = -1;
-                    for (const pKey in weightByProductInLast) {
-                        if (weightByProductInLast[pKey] > maxW) { maxW = weightByProductInLast[pKey]; chosenKey = pKey; }
-                    }
-                    if (!chosenKey) chosenKey = Object.keys(boxesCutsize)[0]; // fallback an toàn
-                    
-                    // Lấy item đại diện để fill parentID/displayName
-                    const rep = (lastContainerItems.find(it => findProductKeyByInternalId(it.internalId, metaByKey) === chosenKey) || {});
-                    const orderQtyChosen = (boxesCutsize[chosenKey]?.weight || 0);
-                    const suggest = Math.min(overage, orderQtyChosen); // an toàn
-                    
-                    option2.push({
-                        type: "dedicated",
-                        action: "decrease",
-                        internalId: "", // product-level (không gắn variant)
-                        parentID: findParentID(rep.internalId, metaByKey) || null,
-                        displayName: findDisplayName(rep.internalId, metaByKey) || chosenKey,
-                        suggestedQty: fixed3(suggest),              // MT (NET)
-                        uom: "MT",
-                        currentOrder: fixed3(orderQtyChosen),
-                        targetWeight: fixed3(orderQtyChosen - suggest), // giảm đúng phần dư
-                        containers: containers.length,              // giữ nguyên số cont (đều full)
-                        loadingType: "decrease_to_full_containers"
-                    });
-                    
-                    if (option2.length) out.option2 = option2;
-                }
-            }
-            // --- CASE B: Cont cuối < 90% => đề xuất bỏ hẳn cont cuối (per PRODUCT), chỉ khi có >= 2 cont
-            else if (lastUtil < THRESHOLD && containers.length > 1) {
-                
-                // Tính tổng NET theo product ở các cont trước (không tính cont cuối)
-                const productWeightInPreviousContainers = {};
-                for (let i = 0; i < containers.length - 1; i++) {
-                    for (const it of (containers[i].item || [])) {
-                        const pKey = findProductKeyByInternalId(it.internalId, metaByKey);
-                        if (!pKey) continue;
-                        productWeightInPreviousContainers[pKey] =
-                            (productWeightInPreviousContainers[pKey] || 0) + (parseFloat(it.netWeight) || 0);
-                    }
-                }
-                
-                // Mỗi product xuất 1 dòng: reduction = order(product) - qtyInPreviousContainers(product)
-                const processedProducts = new Set();
-                for (const it of lastContainerItems) {
-                    const pKey = findProductKeyByInternalId(it.internalId, metaByKey);
-                    if (!pKey || processedProducts.has(pKey)) continue;
-                    processedProducts.add(pKey);
-                    
-                    const orderQty = boxesCutsize[pKey]?.weight || 0;
-                    const qtyPrev = productWeightInPreviousContainers[pKey] || 0;
-                    const reductionQty = Math.max(0, orderQty - qtyPrev);
-                    
-                    if (reductionQty > 0.001) {
-                        option2.push({
-                            type: "dedicated",
-                            action: "decrease",
-                            internalId: "", // product-level
-                            parentID: findParentID(it.internalId, metaByKey) || null,
-                            displayName: findDisplayName(it.internalId, metaByKey) || pKey,
-                            suggestedQty: fixed3(reductionQty),       // MT (NET)
-                            uom: "MT",
-                            currentOrder: fixed3(orderQty),
-                            targetWeight: fixed3(qtyPrev),            // chỉ giữ lượng ở các cont trước
-                            containers: Math.max(0, containers.length - 1),
-                            loadingType: "per_product_last_container"
-                        });
-                    }
-                }
-                
-                if (option2.length) out.option2 = option2;
-            }
-            // else: 90% ≤ lastUtil < full → không đề xuất giảm (theo yêu cầu)
-        }
-        
-        return out;
-    }
-
-// Helper function
-    function findProductKeyByInternalId(internalId, metaByKey) {
-        const meta = metaByKey[internalId];
-        return meta ? meta.productKey : null;
-    }
-    function findParentID(internalId, metaByKey) {
-        if (!internalId) return null;
-        const meta = metaByKey[internalId];
-        return meta ? meta.parentID : null;
-    }
-    
-    function findDisplayName(internalId, metaByKey) {
-        if (!internalId) return null;
-        const meta = metaByKey[internalId];
-        return meta ? meta.parentName : null;
-    }
-    
-    
     // ====================== 3D (contiguous by variant, colored) =====================
     
     function getVariantCounts(placedRaw) {
@@ -387,18 +164,7 @@ define(['N/file'], function (file) {
         const maxStacks = (config && config.maxStacksPerColumn) ? config.maxStacksPerColumn : 2;
         const cols = Array.from({ length: S }, () => ({ hUsed: 0, stacks: 0, hasTall: false }));
         
-        // function findColumnFor(h) {
-        //     let best = -1, bestSlack = Infinity;
-        //     for (let i = 0; i < S; i++) {
-        //         const c = cols[i];
-        //         if (c.stacks >= maxStacks) continue;
-        //         if (c.hUsed + h > containerData.height + 1e-9) continue;
-        //         if (h >= tallThreshold - 1e-9 && c.hasTall) continue; // mỗi cột chỉ 1 pallet "cao"
-        //         const slack = containerData.height - (c.hUsed + h);
-        //         if (slack < bestSlack) { bestSlack = slack; best = i; }
-        //     }
-        //     return best;
-        // }
+      
         // chỉ đổi thứ tự lấp cột khi render 3D, không ảnh hưởng số pallet, NET/GROSS, hay các ràng buộc (1 tall/cột, maxStacks…)
         //sửa hàm chọn cột trong bước 3D sang first-fit (cột hợp lệ đầu tiên)
         function findColumnFor(h) {
@@ -460,47 +226,6 @@ define(['N/file'], function (file) {
         return coords;
     }
     
-    function compactVisualGridFinal(cont, containerData, metaByKey) {
-        if (!cont || !cont.coordinates3D || !cont.coordinates3D.length) return;
-        
-        // Lấy layout slot ổn định từ variant đầu tiên của placedRaw
-        const anyMeta = (cont.__placedRaw && cont.__placedRaw[0])
-            ? metaByKey[cont.__placedRaw[0].variantKey]
-            : null;
-        if (!anyMeta) return;
-        
-        const layout = calculateOptimalFloorLayout(anyMeta, containerData);
-        const aWid = layout.actualWidth;
-        const aLen = layout.actualLength;
-        if (!aWid || !aLen) return;
-        
-        const eps = 1e-6;
-        
-        // Xác định các cột/hàng đang dùng
-        const usedCols = [...new Set(cont.coordinates3D.map(c => Math.floor((c.position.x + eps) / aWid)))].sort((a,b)=>a-b);
-        const usedRows = [...new Set(cont.coordinates3D.map(c => Math.floor((c.position.z + eps) / aLen)))].sort((a,b)=>a-b);
-        
-        // Map lại thành dải liên tục 0..N
-        const colMap = new Map(usedCols.map((c,i)=>[c,i]));
-        const rowMap = new Map(usedRows.map((r,i)=>[r,i]));
-        
-        // Áp dụng mapping để “kéo” các cột/hàng sát về mép trái/trước
-        cont.coordinates3D.forEach(c => {
-            const oldCol = Math.floor((c.position.x + eps) / aWid);
-            const oldRow = Math.floor((c.position.z + eps) / aLen);
-            const newCol = colMap.get(oldCol);
-            const newRow = rowMap.get(oldRow);
-            
-            c.position.x = +(newCol * aWid).toFixed(2);
-            c.position.z = +(newRow * aLen).toFixed(2);
-            
-            if (c.remainingDimensions) {
-                c.remainingDimensions.remainingWidth  = (containerData.width  - ((newCol + 1) * aWid)).toFixed(2);
-                c.remainingDimensions.remainingLength = (containerData.length - ((newRow + 1) * aLen)).toFixed(2);
-                // remainingHeight giữ nguyên (không thay đổi y/height)
-            }
-        });
-    }
     
     function calculateOptimalFloorLayout(variantMeta, containerData) {
         const L = +variantMeta.length, W = +variantMeta.width;
@@ -523,7 +248,6 @@ define(['N/file'], function (file) {
             const key = p.productKey + '::' + p.variantKey;
             if (!grouped[key]) grouped[key] = { pallets: 0, netMT: 0, productKey: p.productKey, variantKey: p.variantKey };
             grouped[key].pallets += 1;
-            //   grouped[key].netMT = round6(grouped[key].netMT + p.wMT);
         }
         
         const items = [];
@@ -749,77 +473,6 @@ define(['N/file'], function (file) {
     
 
     // ============================== UNITS / UOM ===============================
-    // tính sức chứa 1 container
-    function computeTheoreticalContainerCapacity(metaByKey, container, S, L, config, containers) {
-        // Nếu đã có containers thực tế, dùng weight của container đầu
-        if (containers && containers.length > 1) {
-            const firstContainer = containers[0];
-            let actualNet = 0;
-            
-            // Tính net weight thực tế từ container đầu
-            for (const item of firstContainer.item || []) {
-                actualNet += parseFloat(item.netWeight || 0);
-            }
-            
-            if (actualNet > 0) {
-                return round6(actualNet);  // Dùng actual capacity thay vì theoretical
-            }
-        }
-        // Danh sách variant
-        const variants = Object.keys(metaByKey).map(k => metaByKey[k]).filter(m => isNum(m.wNetMT) && isNum(m.height));
-        
-        // --- Column stacking ---
-        const H = container.height;
-        const tallTh = H / 2;
-        
-        let bestPerCol = 0;
-        
-        // đơn chiếc
-        for (const a of variants) {
-            if (a.height <= H + 1e-9) bestPerCol = Math.max(bestPerCol, a.wNetMT);
-        }
-        // cặp (tối đa 2 pallet/cột, ≤1 tall, tổng cao ≤ H)
-        for (let i = 0; i < variants.length; i++) {
-            const a = variants[i];
-            for (let j = i; j < variants.length; j++) {
-                const b = variants[j];
-                const tallCount = ((a.height >= tallTh - 1e-9) ? 1 : 0) + ((b.height >= tallTh - 1e-9) ? 1 : 0);
-                const hSum = (+a.height) + (+b.height);
-                if (tallCount <= 1 && hSum <= H + 1e-9) {
-                    bestPerCol = Math.max(bestPerCol, (+a.wNetMT) + (+b.wNetMT));
-                }
-            }
-        }
-        const capGeom = S * bestPerCol;               // theo thể tích/chiều cao
-        
-        // Tìm variant nhẹ nhất (GROSS) để tính số pallet tối đa
-        let lightestGross = Infinity;
-        for (const v of variants) {
-            if (v.grossWeightPerPalletMT && v.grossWeightPerPalletMT > 0) {
-                lightestGross = Math.min(lightestGross, v.grossWeightPerPalletMT);
-            }
-        }
-        
-        let capWeight = container.maxWeight; // default
-        
-        if (lightestGross !== Infinity && lightestGross > 0) {
-            // Số pallet tối đa theo trọng lượng GROSS
-            const maxPallets = Math.floor(container.maxWeight / lightestGross);
-            
-            // Tính lại NET capacity tương ứng với số pallet đó
-            // Giả sử tỷ lệ NET/GROSS đồng nhất, hoặc lấy variant có NET weight cao nhất
-            let bestNetPerPallet = 0;
-            for (const v of variants) {
-                if (v.wNetMT > bestNetPerPallet) bestNetPerPallet = v.wNetMT;
-            }
-            
-            capWeight = maxPallets * bestNetPerPallet;
-        }
-        
-        
-        return round6(Math.min(capGeom, capWeight));  // MT/container
-        
-    }
     
     function enforceTallPerColumnConstraint(contOut, metaByKey, container, S) {
         // "Tall" = pallet có height > H/2 → trong 20’ A4 (4L) = tall
@@ -881,13 +534,9 @@ define(['N/file'], function (file) {
         const def = {
             // Đơn vị
             isKg: true,                     // mặc định hiểu net/gross per pallet là KG → đổi sang MT
-            
-            
             // Stack toàn cục (fallback, dùng cho 3D)
             maxStackLayers: 2,
             strictStackHeightCheck: true,
-            
-            
             maxStacksPerColumn: 3
         };
         return Object.assign(def, cfg || {});
